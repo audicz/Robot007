@@ -92,15 +92,17 @@ fun RobotCockpitApp() {
                     0 -> Dashboard(
                         connected, estop, armed, throttle, steering, battery, speedLimit, distance, heading,
                         onOpenController = { page = 2 },
-                        onArm = { if (connected && !estop) armed = true },
-                        onStop = { stopRobot() }
+                        onArm = { if (connected) { estop = false; armed = true } },
+                        onStop = { stopRobot() },
+                        onDrive = { y, x -> if (connected && armed && !estop) { throttle = y; steering = x } },
+                        onLimit = { speedLimit = it }
                     )
                     1 -> MapScreen(distance, heading, onHome = { distance = 0f; heading = 0f })
                     2 -> ControllerScreen(
                         throttle, steering, armed, estop, connected, speedLimit,
                         onDrive = { y, x -> if (armed && !estop && connected) { throttle = y; steering = x } },
                         onStop = { stopRobot() },
-                        onArm = { if (connected && !estop) armed = true },
+                        onArm = { if (connected) { estop = false; armed = true } },
                         onDisarm = { armed = false; throttle = 0f; steering = 0f },
                         onLimit = { speedLimit = it }
                     )
@@ -181,10 +183,11 @@ private fun ScreenTitle(kicker: String, title: String, detail: String? = null) {
 private fun Dashboard(
     connected: Boolean, estop: Boolean, armed: Boolean, throttle: Float, steering: Float,
     battery: Float, speedLimit: Float, distance: Float, heading: Float,
-    onOpenController: () -> Unit, onArm: () -> Unit, onStop: () -> Unit
+    onOpenController: () -> Unit, onArm: () -> Unit, onStop: () -> Unit,
+    onDrive: (Float, Float) -> Unit, onLimit: (Float) -> Unit
 ) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), contentPadding = PaddingValues(top = 16.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-        item { ScreenTitle("CENTRÁLNÍ PANEL", "Přehled robota", "Stav systému a rychlý přístup k řízení") }
+    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item { ScreenTitle("CENTRÁLNÍ PANEL", "Robot · live přehled", "2D mapa / LiDAR / ruční řízení") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard("BATERIE", "${battery.toInt()}%", "24,8 V · simulace", Cyan, Modifier.weight(1f))
@@ -196,14 +199,60 @@ private fun Dashboard(
             CardBlock {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("LIVE MAP", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                        Text("Poloha a okolí", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        Text("X +${"%.2f".format(distance)} m   ·   Y +0,42 m", color = Muted, fontSize = 11.sp)
+                        Text("ROS MAP  ·  2D SLAM", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                        Text("Mapa + LiDAR v jednom pohledu", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text("X ${"%.2f".format(distance)} m  ·  Y 0,42 m", color = Muted, fontSize = 10.sp)
                     }
-                    Text("${heading.toInt()}°", color = Cyan, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("${heading.toInt()}°", color = Cyan, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                        Text(if (connected) "DEMO LINK" else "NO ROS LINK", color = Amber, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
-                Spacer(Modifier.height(10.dp))
-                MiniMap(Modifier.fillMaxWidth().height(160.dp))
+                Spacer(Modifier.height(8.dp))
+                MiniMap(Modifier.fillMaxWidth().height(222.dp))
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    LegendDot(Cyan, "Plánovaná trasa")
+                    LegendDot(Green, "Robot")
+                    LegendDot(Amber, "LiDAR body")
+                    LegendDot(Red, "Překážka")
+                }
+                Spacer(Modifier.height(5.dp))
+                Text("ROS / occupancy grid / scan: vizualizace návrhu, nikoli živá data.", color = Muted, fontSize = 9.sp)
+            }
+        }
+        item {
+            CardBlock {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("GAMEPAD  ·  MANUÁLNÍ POHYB", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = .7.sp)
+                        Text(if (armed && !estop) "Pohon povolen" else "Pohon zajištěn", color = if (armed && !estop) Green else Red, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("Levý/virtuální joystick · přetáhni pro pohyb", color = Muted, fontSize = 9.sp)
+                    }
+                    Button(onClick = onOpenController, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp), shape = RoundedCornerShape(9.dp)) { Text("CELÉ ŘÍZENÍ ↗", fontSize = 9.sp) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        Joystick(
+                            modifier = Modifier.size(148.dp),
+                            throttle = throttle, steering = steering,
+                            enabled = connected && armed && !estop,
+                            onMove = { y, x -> onDrive(y, x) },
+                            onRelease = { onDrive(0f, 0f) }
+                        )
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("RYCHLOSTNÍ LIMIT  ${speedLimit.toInt()}%", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Slider(value = speedLimit, onValueChange = onLimit, valueRange = 5f..100f, enabled = !armed || estop)
+                        Button(onClick = onArm, enabled = connected && (!armed || estop), modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(9.dp)) {
+                            Text(if (estop) "POVOLIT POHON" else if (armed) "POHON POVOLEN" else "AKTIVOVAT", fontSize = 10.sp)
+                        }
+                        Button(onClick = onStop, modifier = Modifier.fillMaxWidth().height(42.dp), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White), shape = RoundedCornerShape(9.dp)) {
+                            Text("■  STOP", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+                }
             }
         }
         item {
@@ -258,22 +307,75 @@ private fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
+private fun LegendDot(color: Color, label: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+        Box(Modifier.size(6.dp).background(color, CircleShape))
+        Spacer(Modifier.width(4.dp))
+        Text(label, color = Muted, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
 private fun MiniMap(modifier: Modifier = Modifier) {
-    Canvas(modifier.background(Color(0xFF0D1721), RoundedCornerShape(12.dp))) {
-        val step = 32f
+    Canvas(modifier.background(Color(0xFF0A141D), RoundedCornerShape(12.dp))) {
+        val step = 22f
+        // Occupancy-grid-like background with darker occupied cells.
         var x = 0f
-        while (x < size.width) { drawLine(Line.copy(alpha = .65f), Offset(x, 0f), Offset(x, size.height), 1f); x += step }
+        while (x < size.width) {
+            drawLine(Line.copy(alpha = .50f), Offset(x, 0f), Offset(x, size.height), 1f)
+            x += step
+        }
         var y = 0f
-        while (y < size.height) { drawLine(Line.copy(alpha = .65f), Offset(0f, y), Offset(size.width, y), 1f); y += step }
-        drawLine(Cyan.copy(alpha = .35f), Offset(size.width * .12f, size.height * .75f), Offset(size.width * .52f, size.height * .75f), 5f, cap = StrokeCap.Round)
-        drawLine(Cyan.copy(alpha = .35f), Offset(size.width * .52f, size.height * .75f), Offset(size.width * .52f, size.height * .25f), 5f, cap = StrokeCap.Round)
-        drawLine(Cyan.copy(alpha = .35f), Offset(size.width * .52f, size.height * .25f), Offset(size.width * .82f, size.height * .25f), 5f, cap = StrokeCap.Round)
-        val c = Offset(size.width * .52f, size.height * .75f)
-        drawCircle(Cyan.copy(alpha = .16f), 24f, c)
-        drawCircle(Cyan, 7f, c)
-        drawLine(Cyan, c, Offset(c.x, c.y - 19f), 3f, cap = StrokeCap.Round)
-        drawCircle(Amber, 5f, Offset(size.width * .73f, size.height * .55f))
-        drawCircle(Red, 5f, Offset(size.width * .24f, size.height * .31f))
+        while (y < size.height) {
+            drawLine(Line.copy(alpha = .50f), Offset(0f, y), Offset(size.width, y), 1f)
+            y += step
+        }
+        val cell = 11f
+        val occupied = listOf(
+            .12f to .18f, .15f to .18f, .18f to .18f, .12f to .22f,
+            .78f to .18f, .82f to .18f, .78f to .22f, .82f to .22f,
+            .20f to .58f, .24f to .58f, .20f to .62f,
+            .68f to .68f, .72f to .68f, .76f to .68f, .72f to .72f
+        )
+        occupied.forEach { (ox, oy) ->
+            drawRect(Color(0xFF354756), topLeft = Offset(size.width * ox, size.height * oy), size = Size(cell, cell))
+        }
+
+        // Planned route, drawn as a smooth-looking sequence of connected waypoints.
+        val p1 = Offset(size.width * .14f, size.height * .80f)
+        val p2 = Offset(size.width * .42f, size.height * .80f)
+        val p3 = Offset(size.width * .42f, size.height * .48f)
+        val p4 = Offset(size.width * .68f, size.height * .48f)
+        val p5 = Offset(size.width * .83f, size.height * .34f)
+        val route = listOf(p1, p2, p3, p4, p5)
+        route.zipWithNext().forEach { (a, b) ->
+            drawLine(Cyan.copy(alpha = .22f), a, b, 10f, cap = StrokeCap.Round)
+            drawLine(Cyan, a, b, 2.5f, cap = StrokeCap.Round)
+        }
+        route.forEach { drawCircle(Cyan, 3f, it) }
+
+        // 2D LiDAR sweep and sampled return points, shown in the same map coordinate frame.
+        val robot = Offset(size.width * .42f, size.height * .80f)
+        val lidarRadius = min(size.width, size.height) * .34f
+        for (i in 0 until 52) {
+            val a = (i * 6.92 - 150.0) * Math.PI / 180.0
+            val variable = .52 + ((i * 37) % 43) / 100.0
+            val rr = lidarRadius * variable.toFloat()
+            val hit = Offset(robot.x + kotlin.math.cos(a).toFloat() * rr, robot.y + kotlin.math.sin(a).toFloat() * rr)
+            if (hit.x in 2f..(size.width - 2f) && hit.y in 2f..(size.height - 2f)) {
+                drawLine(Amber.copy(alpha = .10f), robot, hit, 1f)
+                drawCircle(Amber, if (i % 5 == 0) 3f else 1.8f, hit)
+            }
+        }
+
+        // Robot body and heading indicator.
+        drawCircle(Green.copy(alpha = .17f), 18f, robot)
+        drawCircle(Green, 7f, robot)
+        drawLine(Green, robot, Offset(robot.x, robot.y - 19f), 3f, cap = StrokeCap.Round)
+        drawLine(Green, Offset(robot.x, robot.y - 19f), Offset(robot.x - 5f, robot.y - 12f), 2f, cap = StrokeCap.Round)
+        drawLine(Green, Offset(robot.x, robot.y - 19f), Offset(robot.x + 5f, robot.y - 12f), 2f, cap = StrokeCap.Round)
+        drawCircle(Red, 4f, Offset(size.width * .19f, size.height * .28f))
+        drawCircle(Red, 4f, Offset(size.width * .76f, size.height * .20f))
     }
 }
 
