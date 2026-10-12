@@ -21,7 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -271,7 +270,7 @@ private fun OverviewScreen(
                         Text("LIVE MAP  ·  OCCUPANCY GRID", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text("Mapa a sken v jednom pohledu", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text(if (t.map != null) "\${t.map!!.width}×\${t.map!!.height}" else "ČEKÁM NA MAPU", color = if (t.map != null) Green else Amber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(if (t.map != null) "${t.map!!.width}×${t.map!!.height}" else "ČEKÁM NA MAPU", color = if (t.map != null) Green else Amber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(8.dp))
                 RobotMap(t, Modifier.fillMaxWidth().height(230.dp), interactive = false, onGoal = null)
@@ -279,7 +278,7 @@ private fun OverviewScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Legend(Cyan, "LiDAR"); Legend(Green, "Robot"); Legend(Red, "Obsazeno"); Legend(Amber, "Cíl")
                 }
-                Text("Poloha: \${t.x?.let { "%.2f".format(it) } ?: "—"} m / \${t.y?.let { "%.2f".format(it) } ?: "—"} m   ·   zprávy \${t.messages}", color = Muted, fontSize = 10.sp)
+                Text("Poloha: ${t.x?.let { "%.2f".format(it) } ?: "—"} m / ${t.y?.let { "%.2f".format(it) } ?: "—"} m   ·   zprávy ${t.messages}", color = Muted, fontSize = 10.sp)
                 OutlinedButton(onClick = onOpenMap, modifier = Modifier.fillMaxWidth()) { Text("OTEVŘÍT MAPU A NAVIGACI") }
             }
         }
@@ -297,7 +296,7 @@ private fun OverviewScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Joystick(Modifier.weight(1f), throttle, steering, t.connected && armed && !estop, onDrive, onRelease)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("LIMIT \${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp)
+                        Text("LIMIT ${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp)
                         Button(onClick = onArm, enabled = t.connected && !armed && estop, modifier = Modifier.fillMaxWidth()) { Text("POVOLIT") }
                         Button(onClick = onStop, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("■ STOP") }
                     }
@@ -336,12 +335,12 @@ private fun MapScreen(t: RobotTelemetry, onBack: () -> Unit, onGoal: (Float, Flo
             Spacer(Modifier.height(8.dp))
             RobotMap(t, Modifier.fillMaxWidth().height(380.dp), interactive = true, onGoal = onGoal)
             Spacer(Modifier.height(8.dp))
-            Text("Klepnutím do mapy odešleš cíl na \${"goal_pose"} (PoseStamped, frame map). Vyžaduje připojení a odjištění.", color = Muted, fontSize = 10.sp)
+            Text("Klepnutím do mapy odešleš cíl na /goal_pose (PoseStamped, frame map). Vyžaduje připojení a odjištění.", color = Muted, fontSize = 10.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Metric("X", t.x?.let { "%.2f m".format(it) } ?: "—", "map frame", Cyan, Modifier.weight(1f))
             Metric("Y", t.y?.let { "%.2f m".format(it) } ?: "—", "map frame", Green, Modifier.weight(1f))
-            Metric("YAW", t.yaw?.let { "\${(it * 180 / PI).toInt()}°" } ?: "—", "orientace", Amber, Modifier.weight(1f))
+            Metric("YAW", t.yaw?.let { "${(it * 180 / PI).toInt()}°" } ?: "—", "orientace", Amber, Modifier.weight(1f))
         }
     }
 }
@@ -366,9 +365,9 @@ private fun ControlScreen(
             Spacer(Modifier.height(12.dp))
             Joystick(Modifier.fillMaxWidth().heightIn(max = 300.dp).aspectRatio(1.1f), throttle, steering, t.connected && armed && !estop, onDrive, onRelease)
             Spacer(Modifier.height(10.dp))
-            Text("LINEÁRNÍ RYCHLOST  \${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("LINEÁRNÍ RYCHLOST  ${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Slider(value = maxLinear, onValueChange = onLinear, valueRange = 0.05f..1.5f, enabled = !armed || estop)
-            Text("ÚHLOVÁ RYCHLOST  \${"%.2f".format(maxAngular)} rad/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("ÚHLOVÁ RYCHLOST  ${"%.2f".format(maxAngular)} rad/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             Slider(value = maxAngular, onValueChange = onAngular, valueRange = 0.1f..2.5f, enabled = !armed || estop)
             Text("Povel: $lastCommand", color = Cyan, fontSize = 11.sp)
             Spacer(Modifier.height(6.dp))
@@ -397,7 +396,7 @@ private fun TelemetryScreen(t: RobotTelemetry, logs: List<String>) {
                 Text("POLOHA A POHYB", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 DataLine("X", t.x?.let { "%.3f m".format(it) } ?: "—")
                 DataLine("Y", t.y?.let { "%.3f m".format(it) } ?: "—")
-                DataLine("Orientace", t.yaw?.let { "\${(it * 180f / PI.toFloat()).toInt()}°" } ?: "—")
+                DataLine("Orientace", t.yaw?.let { "${(it * 180f / PI.toFloat()).toInt()}°" } ?: "—")
                 DataLine("Lineární rychlost", t.linearSpeed?.let { "%.3f m/s".format(it) } ?: "—")
                 DataLine("Úhlová rychlost", t.angularSpeed?.let { "%.3f rad/s".format(it) } ?: "—")
             }
@@ -408,7 +407,7 @@ private fun TelemetryScreen(t: RobotTelemetry, logs: List<String>) {
                 DataLine("Baterie", t.batteryPercent?.let { "%.1f %%".format(it) } ?: "—")
                 DataLine("Napětí", t.voltage?.let { "%.2f V".format(it) } ?: "—")
                 DataLine("LiDAR paprsky", t.scan?.ranges?.size?.toString() ?: "—")
-                DataLine("Mapa", t.map?.let { "\${it.width} × \${it.height} / %.3f m".format(it.resolution) } ?: "—")
+                DataLine("Mapa", t.map?.let { "${it.width} × ${it.height} / %.3f m".format(it.resolution) } ?: "—")
                 DataLine("Přijaté zprávy", t.messages.toString())
                 DataLine("Poslední téma", t.lastTopic)
                 DataLine("Spojení", t.status)
@@ -599,10 +598,7 @@ private fun RobotMap(
             drawLine(Border, Offset(0f, cy), Offset(w, cy), 1.dp.toPx())
             drawScan(telemetry.scan, cx, cy, telemetry.yaw ?: 0f, scale, 0f, 0f, 0f, 0f, 0f, false)
             drawRobot(cx, cy, telemetry.yaw ?: 0f)
-            drawContext.canvas.nativeCanvas.let { canvas ->
-                val paint = android.graphics.Paint().apply { color = android.graphics.Color.rgb(142, 163, 183); textSize = 12.dp.toPx(); isAntiAlias = true }
-                canvas.drawText(if (telemetry.scan != null) "LiDAR · bez /map" else "Čekám na /map a /scan", 12.dp.toPx(), 22.dp.toPx(), paint)
-            }
+
         }
     }
 }
