@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.consume
@@ -334,7 +335,7 @@ private fun MapScreen(t: RobotTelemetry, onBack: () -> Unit, onGoal: (Float, Flo
                 Text("frame: map", color = Muted, fontSize = 10.sp)
             }
             Spacer(Modifier.height(8.dp))
-            RobotMap(t, Modifier.fillMaxWidth().weight(1f), interactive = true, onGoal = onGoal)
+            RobotMap(t, Modifier.fillMaxWidth().height(380.dp), interactive = true, onGoal = onGoal)
             Spacer(Modifier.height(8.dp))
             Text("Klepnutím do mapy odešleš cíl na \${"goal_pose"} (PoseStamped, frame map). Vyžaduje připojení a odjištění.", color = Muted, fontSize = 10.sp)
         }
@@ -628,17 +629,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScan(
             val a = yaw + scan.angleMin + i * scan.angleIncrement
             val dx = cos(a) * range
             val dy = sin(a) * range
-            val px = if (hasMap) ox + (sxWorld(sx, originX, scale) + dx - originX) * scale else sx + dx * scale
-            val py = if (hasMap) oy + (worldH - (syWorld(sy, oy, worldH, scale) + dy - originY)) * scale else sy - dy * scale
-            drawCircle(Cyan, 1.8.dp.toPx(), Offset(px, py))
+            drawCircle(Cyan, 1.8.dp.toPx(), Offset(sx + dx * scale, sy - dy * scale))
         }
         i += stride
     }
 }
-
-private fun sxWorld(screenX: Float, originX: Float, scale: Float): Float = originX + screenX / scale
-private fun syWorld(screenY: Float, oy: Float, worldH: Float, scale: Float): Float = worldH - (screenY - oy) / scale
-
 private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRobot(x: Float, y: Float, yaw: Float) {
     drawCircle(Green.copy(alpha = .2f), 13.dp.toPx(), Offset(x, y))
     drawCircle(Green, 6.dp.toPx(), Offset(x, y))
