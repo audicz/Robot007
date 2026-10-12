@@ -84,7 +84,7 @@ class RosbridgeClient(private val onTelemetry: (RobotTelemetry) -> Unit, private
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     try { parse(JSONObject(text)) }
-                    catch (e: Exception) { log("Neplatná ROS zpráva: \${e.message ?: "JSON"}") }
+                    catch (e: Exception) { log("Neplatná ROS zpráva: ${e.message ?: "JSON"}") }
                 }
 
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -100,17 +100,17 @@ class RosbridgeClient(private val onTelemetry: (RobotTelemetry) -> Unit, private
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                     socket = null
                     update { it.copy(connected = false, status = "CHYBA SPOJENÍ", error = t.message ?: "WebSocket chyba") }
-                    log("Chyba rosbridge: \${t.message ?: t.javaClass.simpleName}")
+                    log("Chyba rosbridge: ${t.message ?: t.javaClass.simpleName}")
                 }
             })
         } catch (e: Exception) {
             update { it.copy(connected = false, status = "CHYBNÁ ADRESA", error = e.message) }
-            log("Neplatná URL: \${e.message}")
+            log("Neplatná URL: ${e.message}")
         }
     }
 
     private fun subscribe(topic: String) {
-        val id = "sub_\${++requestId}"
+        val id = "sub_${++requestId}"
         send(JSONObject().put("op", "subscribe").put("id", id).put("topic", topic).put("queue_length", 1).put("throttle_rate", 100))
         log("SUB $topic")
     }
