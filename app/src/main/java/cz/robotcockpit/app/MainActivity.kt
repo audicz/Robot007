@@ -308,7 +308,7 @@ private fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
 
 @Composable
 private fun LegendDot(color: Color, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(6.dp).background(color, CircleShape))
         Spacer(Modifier.width(4.dp))
         Text(label, color = Muted, fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
