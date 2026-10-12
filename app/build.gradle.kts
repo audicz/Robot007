@@ -12,8 +12,8 @@ android {
         applicationId = "cz.robotcockpit.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2-ros2"
     }
 
     buildFeatures {
@@ -42,4 +42,5 @@ dependencies {
     implementation("androidx.compose.ui:ui:1.7.8")
     implementation("androidx.compose.ui:ui-tooling-preview:1.7.8")
     implementation("androidx.compose.material3:material3:1.3.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
