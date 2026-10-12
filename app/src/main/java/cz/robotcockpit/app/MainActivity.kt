@@ -340,7 +340,7 @@ private fun MapScreen(t: RobotTelemetry, onBack: () -> Unit, onGoal: (Float, Flo
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Metric("X", t.x?.let { "%.2f m".format(it) } ?: "—", "map frame", Cyan, Modifier.weight(1f))
             Metric("Y", t.y?.let { "%.2f m".format(it) } ?: "—", "map frame", Green, Modifier.weight(1f))
-            Metric("YAW", t.yaw?.let { "${(it * 180 / PI).toInt()}°" } ?: "—", "orientace", Amber, Modifier.weight(1f))
+            Metric("YAW", t.yaw?.let { "${(it * 180f / PI.toFloat()).toInt()}°" } ?: "—", "orientace", Amber, Modifier.weight(1f))
         }
     }
 }
