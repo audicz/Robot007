@@ -383,7 +383,7 @@ private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float
             },
             onDrag = { change, _ ->
                 change.consume()
-                val radius = size.minDimension / 2f
+                val radius = minOf(size.width, size.height).toFloat() / 2f
                 val dx = (change.position.x - size.width / 2f) / radius
                 val dy = (size.height / 2f - change.position.y) / radius
                 val len = sqrt(dx * dx + dy * dy).coerceAtMost(1f)
