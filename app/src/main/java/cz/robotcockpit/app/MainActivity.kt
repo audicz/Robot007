@@ -36,7 +36,7 @@ import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.UUID
 import kotlin.concurrent.thread
-import kotlin.math.hypot
+import kotlin.math.sqrt
 
 private val Bg = Color(0xFF080D13)
 private val Panel = Color(0xFF111B26)
@@ -374,11 +374,11 @@ private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float
         detectDragGestures(
             onDragStart = { p ->
                 active = true
-                val radius = size.minDimension / 2f
+                val radius = minOf(size.width, size.height).toFloat() / 2f
                 val dx = (p.x - size.width / 2f) / radius
                 val dy = (size.height / 2f - p.y) / radius
-                val len = hypot(dx, dy).coerceAtMost(1f)
-                pos = Offset(dx / maxOf(1f, hypot(dx, dy)), -dy / maxOf(1f, hypot(dx, dy))) * len
+                val len = sqrt(dx * dx + dy * dy).coerceAtMost(1f)
+                pos = Offset(dx / maxOf(1f, sqrt(dx * dx + dy * dy)), -dy / maxOf(1f, sqrt(dx * dx + dy * dy))) * len
                 if (enabled) onMove(pos.y, pos.x)
             },
             onDrag = { change, _ ->
@@ -386,8 +386,8 @@ private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float
                 val radius = size.minDimension / 2f
                 val dx = (change.position.x - size.width / 2f) / radius
                 val dy = (size.height / 2f - change.position.y) / radius
-                val len = hypot(dx, dy).coerceAtMost(1f)
-                val divisor = maxOf(1f, hypot(dx, dy))
+                val len = sqrt(dx * dx + dy * dy).coerceAtMost(1f)
+                val divisor = maxOf(1f, sqrt(dx * dx + dy * dy))
                 pos = Offset(dx / divisor * len, dy / divisor * len)
                 if (enabled) onMove(pos.y, pos.x)
             },
