@@ -1,35 +1,42 @@
 package cz.robotcockpit.app
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothSocket
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.*
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStream
+import java.util.UUID
+import kotlin.concurrent.thread
+import kotlin.math.hypot
 
 private val Bg = Color(0xFF080D13)
 private val Panel = Color(0xFF111B26)
@@ -41,6 +48,126 @@ private val Amber = Color(0xFFFFC66D)
 private val Red = Color(0xFFFF5F6D)
 private val Muted = Color(0xFF8EA3B7)
 private val Ink = Color(0xFFEAF3FB)
+private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+data class RobotTelemetry(
+    val connected: Boolean = false,
+    val status: String = "Bluetooth odpojen",
+    val robotName: String = "—",
+    val armed: Boolean = false,
+    val throttle: Double? = null,
+    val steer: Double? = null,
+    val leftPwm: Int? = null,
+    val rightPwm: Int? = null,
+    val batteryV: Double? = null,
+    val distanceCm: Double? = null,
+    val uptimeMs: Long? = null,
+    val firmware: String = "—",
+    val lastMessage: String = "—",
+    val error: String? = null,
+    val messages: Long = 0
+)
+
+class BluetoothLink(private val onState: (RobotTelemetry) -> Unit) {
+    @Volatile private var socket: BluetoothSocket? = null
+    @Volatile private var writer: OutputStream? = null
+    @Volatile private var running = false
+    @Volatile private var current = RobotTelemetry()
+    private val writeLock = Any()
+
+    @SuppressLint("MissingPermission")
+    fun connect(device: BluetoothDevice) {
+        disconnect("Připojuji…")
+        thread(name = "robot-spp-connect") {
+            try {
+                val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                socket = s
+                s.connect()
+                writer = s.outputStream
+                running = true
+                current = current.copy(connected = true, status = "Připojeno přes SPP", robotName = device.name ?: device.address, error = null)
+                onState(current)
+                sendRaw(JSONObject().put("type", "hello").put("protocol", 1).toString())
+                val reader = BufferedReader(InputStreamReader(s.inputStream, Charsets.UTF_8))
+                while (running) {
+                    val line = reader.readLine() ?: break
+                    if (line.isBlank()) continue
+                    try {
+                        val j = JSONObject(line)
+                        if (j.optString("type") == "telemetry") {
+                            current = current.copy(
+                                connected = true,
+                                status = "Připojeno · data přijímána",
+                                armed = j.optBoolean("armed", false),
+                                throttle = if (j.has("throttle")) j.optDouble("throttle") else null,
+                                steer = if (j.has("steer")) j.optDouble("steer") else null,
+                                leftPwm = if (j.has("leftPwm")) j.optInt("leftPwm") else null,
+                                rightPwm = if (j.has("rightPwm")) j.optInt("rightPwm") else null,
+                                batteryV = if (j.has("batteryV") && !j.isNull("batteryV")) j.optDouble("batteryV") else null,
+                                distanceCm = if (j.has("distanceCm") && !j.isNull("distanceCm")) j.optDouble("distanceCm") else null,
+                                uptimeMs = if (j.has("uptimeMs")) j.optLong("uptimeMs") else null,
+                                firmware = j.optString("firmware", current.firmware),
+                                lastMessage = line,
+                                error = null,
+                                messages = current.messages + 1
+                            )
+                        } else {
+                            current = current.copy(lastMessage = line, messages = current.messages + 1)
+                        }
+                        onState(current)
+                    } catch (_: Exception) {
+                        current = current.copy(lastMessage = line, messages = current.messages + 1)
+                        onState(current)
+                    }
+                }
+                if (running) disconnect("Spojení bylo ukončeno")
+            } catch (e: Exception) {
+                closeSocket()
+                current = current.copy(connected = false, armed = false, status = "Připojení selhalo", error = e.message ?: e.javaClass.simpleName)
+                onState(current)
+            }
+        }
+    }
+
+    fun sendDrive(throttle: Float, steer: Float, armed: Boolean) {
+        sendRaw(JSONObject().put("type", "cmd").put("throttle", throttle.coerceIn(-1f, 1f).toDouble())
+            .put("steer", steer.coerceIn(-1f, 1f).toDouble()).put("armed", armed).toString())
+    }
+
+    fun arm(enabled: Boolean) {
+        sendRaw(JSONObject().put("type", if (enabled) "arm" else "stop").put("armed", enabled).toString())
+    }
+
+    private fun sendRaw(line: String) {
+        try {
+            synchronized(writeLock) {
+                val out = writer ?: return
+                out.write((line + "\n").toByteArray(Charsets.UTF_8))
+                out.flush()
+            }
+        } catch (e: Exception) {
+            current = current.copy(error = "Odeslání selhalo: ${e.message}")
+            onState(current)
+        }
+    }
+
+    fun disconnect(message: String = "Odpojeno") {
+        try {
+            if (running) sendRaw(JSONObject().put("type", "stop").put("armed", false).toString())
+        } catch (_: Exception) {}
+        running = false
+        closeSocket()
+        current = current.copy(connected = false, armed = false, status = message)
+        onState(current)
+    }
+
+    private fun closeSocket() {
+        try { writer?.close() } catch (_: Exception) {}
+        try { socket?.close() } catch (_: Exception) {}
+        writer = null
+        socket = null
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,138 +176,95 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@SuppressLint("MissingPermission")
 @Composable
 fun RobotCockpitApp() {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("robot_cockpit", 0) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var t by remember { mutableStateOf(RobotTelemetry()) }
     var page by remember { mutableIntStateOf(0) }
-    var telemetry by remember { mutableStateOf(RobotTelemetry()) }
-    val logs = remember { mutableStateListOf<String>() }
-    var url by remember { mutableStateOf(prefs.getString("url", "ws://192.168.1.100:9090") ?: "ws://192.168.1.100:9090") }
-    var mapTopic by remember { mutableStateOf(prefs.getString("map", "/map") ?: "/map") }
-    var scanTopic by remember { mutableStateOf(prefs.getString("scan", "/scan") ?: "/scan") }
-    var odomTopic by remember { mutableStateOf(prefs.getString("odom", "/odom") ?: "/odom") }
-    var batteryTopic by remember { mutableStateOf(prefs.getString("battery", "/battery_state") ?: "/battery_state") }
-    var cmdTopic by remember { mutableStateOf(prefs.getString("cmd", "/cmd_vel") ?: "/cmd_vel") }
-    var goalTopic by remember { mutableStateOf(prefs.getString("goal", "/goal_pose") ?: "/goal_pose") }
+    var paired by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
+    var selectedAddress by remember { mutableStateOf("") }
+    var maxPower by remember { mutableFloatStateOf(0.35f) }
     var armed by remember { mutableStateOf(false) }
-    var estop by remember { mutableStateOf(true) }
-    var throttle by remember { mutableFloatStateOf(0f) }
-    var steering by remember { mutableFloatStateOf(0f) }
-    var maxLinear by remember { mutableFloatStateOf(0.35f) }
-    var maxAngular by remember { mutableFloatStateOf(0.8f) }
-    var lastCommand by remember { mutableStateOf("STOP") }
+    var command by remember { mutableStateOf("STOP") }
+    val adapter = remember { BluetoothAdapter.getDefaultAdapter() }
+    val link = remember { BluetoothLink { t = it; if (!it.connected) armed = false } }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            paired = try { adapter?.bondedDevices?.toList()?.sortedBy { it.name ?: it.address } ?: emptyList() } catch (_: SecurityException) { emptyList() }
+            if (selectedAddress.isBlank()) selectedAddress = paired.firstOrNull()?.address ?: ""
+        } else {
+            t = t.copy(status = "Chybí oprávnění Bluetooth", error = "Povol aplikaci přístup k připojeným zařízením.")
+        }
+    }
 
-    val client = remember {
-        RosbridgeClient(
-            onTelemetry = { telemetry = it },
-            onLog = { message ->
-                logs.add(0, message)
-                while (logs.size > 80) logs.removeAt(logs.lastIndex)
+    fun refreshDevices() {
+        if (android.os.Build.VERSION.SDK_INT >= 31 && ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            paired = try { adapter?.bondedDevices?.toList()?.sortedBy { it.name ?: it.address } ?: emptyList() } catch (e: Exception) {
+                t = t.copy(error = e.message ?: "Nelze načíst spárovaná zařízení")
+                emptyList()
             }
-        )
-    }
-
-    fun connect() {
-        prefs.edit().putString("url", url.trim())
-            .putString("map", mapTopic.trim()).putString("scan", scanTopic.trim())
-            .putString("odom", odomTopic.trim()).putString("battery", batteryTopic.trim())
-            .putString("cmd", cmdTopic.trim()).putString("goal", goalTopic.trim()).apply()
-        client.connect(url.trim(), RosTopics(mapTopic.trim(), scanTopic.trim(), odomTopic.trim(), batteryTopic.trim(), cmdTopic.trim(), goalTopic.trim()))
-        armed = false
-        estop = true
-        throttle = 0f
-        steering = 0f
-    }
-
-    fun stopRobot() {
-        client.publishVelocity(0f, 0f)
-        throttle = 0f
-        steering = 0f
-        armed = false
-        estop = true
-        lastCommand = "NOUZOVÝ STOP · nulový Twist odeslán"
-    }
-
-    fun drive(y: Float, x: Float) {
-        if (telemetry.connected && armed && !estop) {
-            throttle = y
-            steering = x
-            val linear = y * maxLinear
-            val angular = -x * maxAngular
-            client.publishVelocity(linear, angular)
-            lastCommand = "v %.2f m/s · ω %.2f rad/s".format(linear, angular)
+            if (selectedAddress.isBlank()) selectedAddress = paired.firstOrNull()?.address ?: ""
         }
     }
 
     DisposableEffect(Unit) {
-        onDispose { client.disconnect(false) }
+        refreshDevices()
+        onDispose { link.disconnect("Aplikace ukončena") }
     }
 
-    MaterialTheme(colorScheme = darkColorScheme(
-        primary = Cyan, secondary = Green, background = Bg, surface = Panel,
-        onPrimary = Bg, onBackground = Ink, onSurface = Ink, error = Red
-    )) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Green, background = Bg, surface = Panel, onPrimary = Bg, onBackground = Ink, onSurface = Ink, error = Red)) {
         Column(Modifier.fillMaxSize().background(Bg)) {
-            TopHeader(
-                connected = telemetry.connected,
-                status = telemetry.status,
-                estop = estop,
-                onConnect = { if (telemetry.connected) { stopRobot(); client.disconnect(); armed = false } else page = 4 }
-            )
+            Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).background(Cyan.copy(alpha = .13f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                        Text("R7", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("ROBOT COCKPIT", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                        Text("ESP32 · BLUETOOTH CLASSIC SPP", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).background(if (t.connected) Green else Amber, CircleShape))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (t.connected) "ONLINE" else "OFFLINE", color = if (t.connected) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Text(if (armed && t.connected) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && t.connected) Green else Red, fontSize = 8.sp)
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(t.status, color = if (t.connected) Green else Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                    OutlinedButton(onClick = { if (t.connected) { link.disconnect(); armed = false } else { refreshDevices(); page = 3 } }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
+                        Text(if (t.connected) "ODPOJIT" else "PŘIPOJIT", fontSize = 10.sp)
+                    }
+                }
+                if (t.error != null) Text(t.error ?: "", color = Red, fontSize = 10.sp)
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (page) {
-                    0 -> OverviewScreen(
-                        telemetry, armed, estop, throttle, steering, maxLinear, lastCommand,
-                        onOpenMap = { page = 1 },
-                        onOpenControl = { page = 2 },
-                        onArm = { if (telemetry.connected) { estop = false; armed = true; lastCommand = "POHON POVOLEN" } },
-                        onStop = { stopRobot() },
-                        onDrive = { y, x -> drive(y, x) },
-                        onRelease = { drive(0f, 0f) }
-                    )
-                    1 -> MapScreen(
-                        telemetry,
-                        onBack = { page = 0 },
-                        onGoal = { x, y -> if (telemetry.connected && !estop) client.publishGoal(x, y) }
-                    )
-                    2 -> ControlScreen(
-                        telemetry, armed, estop, throttle, steering, maxLinear, maxAngular,
-                        onArm = { if (telemetry.connected) { estop = false; armed = true; lastCommand = "POHON POVOLEN" } },
-                        onDisarm = { client.publishVelocity(0f, 0f); armed = false; throttle = 0f; steering = 0f },
-                        onStop = { stopRobot() },
-                        onDrive = { y, x -> drive(y, x) },
-                        onRelease = { drive(0f, 0f) },
-                        onLinear = { maxLinear = it },
-                        onAngular = { maxAngular = it },
-                        lastCommand = lastCommand
-                    )
-                    3 -> TelemetryScreen(telemetry, logs)
-                    else -> SetupScreen(
-                        url, mapTopic, scanTopic, odomTopic, batteryTopic, cmdTopic, goalTopic,
-                        telemetry.connected,
-                        onUrl = { url = it }, onMap = { mapTopic = it }, onScan = { scanTopic = it },
-                        onOdom = { odomTopic = it }, onBattery = { batteryTopic = it },
-                        onCmd = { cmdTopic = it }, onGoal = { goalTopic = it },
-                        onConnect = { connect() },
-                        onDisconnect = { stopRobot(); client.disconnect(); armed = false }
-                    )
+                    0 -> OverviewPage(t, armed, maxPower, onDrivePage = { page = 1 }, onConnectPage = { refreshDevices(); page = 3 }, onArm = {
+                        if (t.connected) { link.arm(true); armed = true; command = "POHON POVOLEN" }
+                    }, onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "NOUZOVÝ STOP" })
+                    1 -> DrivePage(t, armed, maxPower, onPower = { maxPower = it }, onArm = { link.arm(true); armed = true; command = "POHON POVOLEN" }, onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "NOUZOVÝ STOP" }, onDrive = { y, x ->
+                        val throttle = y * maxPower
+                        val steer = x * maxPower
+                        if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
+                    }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
+                    2 -> TelemetryPage(t)
+                    else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
+                        val device = paired.firstOrNull { it.address == selectedAddress }
+                        if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
+                    })
                 }
             }
             NavigationBar(containerColor = Panel, contentColor = Ink) {
-                val labels = listOf("PŘEHLED", "MAPA", "ŘÍZENÍ", "TELEMETRIE", "NASTAVENÍ")
-                val icons = listOf("⌂", "◎", "✣", "⌁", "⚙")
-                labels.forEachIndexed { index, label ->
-                    NavigationBarItem(
-                        selected = page == index,
-                        onClick = { page = index },
-                        icon = { Text(icons[index], fontSize = 20.sp, fontWeight = FontWeight.Bold) },
-                        label = { Text(label, fontSize = 8.sp, maxLines = 1) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Cyan, selectedTextColor = Cyan,
-                            indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted
-                        )
-                    )
+                listOf("PŘEHLED", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH").forEachIndexed { i, label ->
+                    NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌂", "✣", "⌁", "ᛒ")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
                 }
             }
         }
@@ -188,53 +272,17 @@ fun RobotCockpitApp() {
 }
 
 @Composable
-private fun TopHeader(connected: Boolean, status: String, estop: Boolean, onConnect: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 14.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(38.dp).background(Cyan.copy(alpha = .13f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                Text("R7", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Black)
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("ROBOT COCKPIT", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
-                Text("ROS 2 GROUND CONTROL  ·  ANDROID", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(7.dp).background(if (connected) Green else Amber, CircleShape))
-                    Spacer(Modifier.width(5.dp))
-                    Text(if (connected) "ONLINE" else "OFFLINE", color = if (connected) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                }
-                Text(if (estop) "POHON ZAJIŠTĚN" else "POHON POVOLEN", color = if (estop) Red else Green, fontSize = 8.sp)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(status, color = if (connected) Green else Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = onConnect, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp), shape = RoundedCornerShape(8.dp)) {
-                Text(if (connected) "ODPOJIT" else "PŘIPOJIT", fontSize = 10.sp)
-            }
-        }
+private fun ScreenTitle(kicker: String, title: String, subtitle: String) {
+    Column(Modifier.padding(bottom = 8.dp)) {
+        Text(kicker, color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
+        Text(title, color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+        Text(subtitle, color = Muted, fontSize = 11.sp)
     }
 }
 
 @Composable
-private fun ScreenHeading(kicker: String, title: String, subtitle: String? = null) {
-    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
-        Text(kicker, color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-        Text(title, color = Ink, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-        if (subtitle != null) Text(subtitle, color = Muted, fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Panel),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Border),
-        shape = RoundedCornerShape(14.dp)
-    ) {
+private fun CardPanel(content: @Composable ColumnScope.() -> Unit) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), border = androidx.compose.foundation.BorderStroke(1.dp, Border), shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.padding(13.dp), content = content)
     }
 }
@@ -242,395 +290,200 @@ private fun PanelCard(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun Metric(label: String, value: String, detail: String, color: Color, modifier: Modifier = Modifier) {
     Column(modifier.background(Panel, RoundedCornerShape(12.dp)).padding(10.dp)) {
-        Text(label, color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .6.sp)
+        Text(label, color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
         Text(value, color = color, fontSize = 19.sp, fontWeight = FontWeight.Black, maxLines = 1)
         Text(detail, color = Muted, fontSize = 9.sp, maxLines = 1)
     }
 }
 
 @Composable
-private fun OverviewScreen(
-    t: RobotTelemetry, armed: Boolean, estop: Boolean, throttle: Float, steering: Float,
-    maxLinear: Float, lastCommand: String, onOpenMap: () -> Unit, onOpenControl: () -> Unit,
-    onArm: () -> Unit, onStop: () -> Unit, onDrive: (Float, Float) -> Unit, onRelease: () -> Unit
-) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { ScreenHeading("MISSION CONTROL", "Živý přehled robota", "Mapa · LiDAR · lokalizace · ruční ovládání") }
+private fun OverviewPage(t: RobotTelemetry, armed: Boolean, power: Float, onDrivePage: () -> Unit, onConnectPage: () -> Unit, onArm: () -> Unit, onStop: () -> Unit) {
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+        item { ScreenTitle("MISSION CONTROL", "Přehled robota", "Přímé spojení ESP32 · bez Wi-Fi a ROS") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Metric("BATERIE", t.batteryPercent?.let { "%.0f%%".format(it) } ?: "—", t.voltage?.let { "%.1f V".format(it) } ?: "bez dat", Cyan, Modifier.weight(1f))
-                Metric("RYCHLOST", t.linearSpeed?.let { "%.2f".format(it) } ?: "—", "m/s · odometrie", Green, Modifier.weight(1f))
-                Metric("LiDAR", t.scan?.ranges?.size?.toString() ?: "—", "měřicích paprsků", Amber, Modifier.weight(1f))
+                Metric("BATERIE", t.batteryV?.let { "%.2f V".format(it) } ?: "—", "napětí", Cyan, Modifier.weight(1f))
+                Metric("LEVÝ MOTOR", t.leftPwm?.toString() ?: "—", "PWM", Green, Modifier.weight(1f))
+                Metric("PRAVÝ MOTOR", t.rightPwm?.toString() ?: "—", "PWM", Amber, Modifier.weight(1f))
             }
         }
         item {
-            PanelCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("LIVE MAP  ·  OCCUPANCY GRID", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Text("Mapa a sken v jednom pohledu", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Text(if (t.map != null) "${t.map!!.width}×${t.map!!.height}" else "ČEKÁM NA MAPU", color = if (t.map != null) Green else Amber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            CardPanel {
+                Text("STAV ŘÍZENÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(if (armed && t.connected) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && t.connected) Green else Red, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text("Výkonový limit aplikace: ${(power * 100).toInt()} %", color = Muted, fontSize = 11.sp)
+                Spacer(Modifier.height(10.dp))
+                Button(onClick = onDrivePage, modifier = Modifier.fillMaxWidth(), enabled = t.connected) { Text("OTEVŘÍT JOYSTICK") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onArm, enabled = t.connected && !armed, modifier = Modifier.weight(1f)) { Text("POVOLIT POHON") }
+                    Button(onClick = onStop, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("■ STOP") }
                 }
-                Spacer(Modifier.height(8.dp))
-                RobotMap(t, Modifier.fillMaxWidth().height(230.dp), interactive = false, onGoal = null)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Legend(Cyan, "LiDAR"); Legend(Green, "Robot"); Legend(Red, "Obsazeno"); Legend(Amber, "Cíl")
-                }
-                Text("Poloha: ${t.x?.let { "%.2f".format(it) } ?: "—"} m / ${t.y?.let { "%.2f".format(it) } ?: "—"} m   ·   zprávy ${t.messages}", color = Muted, fontSize = 10.sp)
-                OutlinedButton(onClick = onOpenMap, modifier = Modifier.fillMaxWidth()) { Text("OTEVŘÍT MAPU A NAVIGACI") }
             }
         }
         item {
-            PanelCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("MANUÁLNÍ OVLÁDÁNÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Text(if (armed && !estop) "Pohon povolen" else "Pohon bezpečně zajištěn", color = if (armed && !estop) Green else Red, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                        Text("Povely se posílají do ROS tématu cmd_vel.", color = Muted, fontSize = 10.sp)
-                    }
-                    Button(onClick = onOpenControl) { Text("ŘÍZENÍ ↗") }
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Joystick(Modifier.weight(1f), throttle, steering, t.connected && armed && !estop, onDrive, onRelease)
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("LIMIT ${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp)
-                        Button(onClick = onArm, enabled = t.connected && !armed && estop, modifier = Modifier.fillMaxWidth()) { Text("POVOLIT") }
-                        Button(onClick = onStop, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("■ STOP") }
-                    }
-                }
-                Text(lastCommand, color = Muted, fontSize = 10.sp)
+            CardPanel {
+                Text("TELEMETRIE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DataRow("Bluetooth zařízení", t.robotName)
+                DataRow("Firmware", t.firmware)
+                DataRow("Vzdálenost", t.distanceCm?.let { "%.1f cm".format(it) } ?: "—")
+                DataRow("Doba běhu", t.uptimeMs?.let { "${it / 1000} s" } ?: "—")
+                DataRow("Přijaté zprávy", t.messages.toString())
+                Text("Připojení: ${if (t.connected) "aktivní" else "neaktivní"}", color = Muted, fontSize = 10.sp)
+                OutlinedButton(onClick = onConnectPage, modifier = Modifier.fillMaxWidth()) { Text("NASTAVIT BLUETOOTH") }
             }
         }
         item {
-            PanelCard {
-                Text("STAV KOMUNIKACE", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                StatusLine("ROS bridge", if (t.connected) "PŘIPOJENO" else "OFFLINE", t.connected)
-                StatusLine("Occupancy grid", if (t.map != null) "DATA PŘIJATA" else "ČEKÁM", t.map != null)
-                StatusLine("LaserScan", if (t.scan != null) "DATA PŘIJATA" else "ČEKÁM", t.scan != null)
-                StatusLine("Odometry", if (t.x != null && t.y != null) "DATA PŘIJATA" else "ČEKÁM", t.x != null)
-                if (t.error != null) Text(t.error, color = Red, fontSize = 11.sp)
+            CardPanel {
+                Text("DŮLEŽITÉ", color = Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text("Nouzové STOP v aplikaci není hardwarový nouzový vypínač. ESP32 má vlastní watchdog, ale při testování zvedni hnací kola a nejprve ověř zapojení motorového driveru.", color = Muted, fontSize = 11.sp)
             }
         }
     }
 }
 
 @Composable
-private fun MapScreen(t: RobotTelemetry, onBack: () -> Unit, onGoal: (Float, Float) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("NAVIGACE  ·  ROS 2", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                Text("Mapa a cíle", color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            }
-            OutlinedButton(onClick = onBack) { Text("ZPĚT") }
-        }
-        PanelCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (t.map != null) "MAPA ŽIVÁ" else "ČEKÁM NA /map", color = if (t.map != null) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("frame: map", color = Muted, fontSize = 10.sp)
-            }
-            Spacer(Modifier.height(8.dp))
-            RobotMap(t, Modifier.fillMaxWidth().height(380.dp), interactive = true, onGoal = onGoal)
-            Spacer(Modifier.height(8.dp))
-            Text("Klepnutím do mapy odešleš cíl na /goal_pose (PoseStamped, frame map). Vyžaduje připojení a odjištění.", color = Muted, fontSize = 10.sp)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Metric("X", t.x?.let { "%.2f m".format(it) } ?: "—", "map frame", Cyan, Modifier.weight(1f))
-            Metric("Y", t.y?.let { "%.2f m".format(it) } ?: "—", "map frame", Green, Modifier.weight(1f))
-            Metric("YAW", t.yaw?.let { "${(it * 180f / PI.toFloat()).toInt()}°" } ?: "—", "orientace", Amber, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun ControlScreen(
-    t: RobotTelemetry, armed: Boolean, estop: Boolean, throttle: Float, steering: Float,
-    maxLinear: Float, maxAngular: Float, onArm: () -> Unit, onDisarm: () -> Unit,
-    onStop: () -> Unit, onDrive: (Float, Float) -> Unit, onRelease: () -> Unit,
-    onLinear: (Float) -> Unit, onAngular: (Float) -> Unit, lastCommand: String
-) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ScreenHeading("MANUAL CONTROL", "Ruční řízení", "Mrtvý muž: po puštění joysticku se odešle nulový povel")
-        PanelCard {
+private fun DrivePage(t: RobotTelemetry, armed: Boolean, power: Float, onPower: (Float) -> Unit, onArm: () -> Unit, onStop: () -> Unit, onDrive: (Float, Float) -> Unit, onRelease: () -> Unit, command: String) {
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ScreenTitle("MANUAL CONTROL", "Ruční řízení", "Drž joystick · puštění odešle nulový povel")
+        CardPanel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(if (armed && !estop) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && !estop) Green else Red, fontSize = 14.sp, fontWeight = FontWeight.Black)
-                    Text(if (t.connected) "ROS bridge je připojen" else "Nejdřív připoj ROS bridge", color = Muted, fontSize = 10.sp)
+                    Text(if (armed && t.connected) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && t.connected) Green else Red, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                    Text(if (t.connected) "SPP spojení aktivní" else "Připoj robota v nabídce Bluetooth", color = Muted, fontSize = 10.sp)
                 }
-                Box(Modifier.size(10.dp).background(if (armed && !estop) Green else Red, CircleShape))
+                Box(Modifier.size(9.dp).background(if (armed && t.connected) Green else Red, CircleShape))
             }
-            Spacer(Modifier.height(12.dp))
-            Joystick(Modifier.fillMaxWidth().heightIn(max = 300.dp).aspectRatio(1.1f), throttle, steering, t.connected && armed && !estop, onDrive, onRelease)
-            Spacer(Modifier.height(10.dp))
-            Text("LINEÁRNÍ RYCHLOST  ${"%.2f".format(maxLinear)} m/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Slider(value = maxLinear, onValueChange = onLinear, valueRange = 0.05f..1.5f, enabled = !armed || estop)
-            Text("ÚHLOVÁ RYCHLOST  ${"%.2f".format(maxAngular)} rad/s", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Slider(value = maxAngular, onValueChange = onAngular, valueRange = 0.1f..2.5f, enabled = !armed || estop)
-            Text("Povel: $lastCommand", color = Cyan, fontSize = 11.sp)
             Spacer(Modifier.height(6.dp))
+            Joystick(Modifier.fillMaxWidth().weight(1f).heightIn(min = 180.dp), enabled = t.connected && armed, onMove = onDrive, onRelease = onRelease)
+            Text("LIMIT VÝKONU · ${(power * 100).toInt()} %", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Slider(value = power, onValueChange = onPower, valueRange = 0.1f..0.6f, enabled = !armed)
+            Text("Poslední povel: $command", color = Cyan, fontSize = 11.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onArm, enabled = t.connected && !armed && estop, modifier = Modifier.weight(1f).height(52.dp)) { Text("POVOLIT POHON") }
-                Button(onClick = onDisarm, enabled = armed, modifier = Modifier.weight(1f).height(52.dp)) { Text("ODJISTIT") }
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = onStop, modifier = Modifier.fillMaxWidth().height(58.dp), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White), shape = RoundedCornerShape(12.dp)) {
-                Text("■  NOUZOVÝ STOP", fontSize = 15.sp, fontWeight = FontWeight.Black)
+                Button(onClick = onArm, enabled = t.connected && !armed, modifier = Modifier.weight(1f).height(50.dp)) { Text("POVOLIT") }
+                Button(onClick = onStop, modifier = Modifier.weight(1f).height(50.dp), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("■ NOUZOVÝ STOP") }
             }
         }
-        PanelCard {
-            Text("BEZPEČNOSTNÍ POZNÁMKA", color = Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text("STOP odešle nulový Twist a aplikace zruší místní povolení pohybu. Není to nezávislý hardwarový nouzový vypínač; ten musí být na robotovi.", color = Muted, fontSize = 11.sp)
-        }
     }
 }
 
 @Composable
-private fun TelemetryScreen(t: RobotTelemetry, logs: List<String>) {
-    LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentPadding = PaddingValues(top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { ScreenHeading("SYSTEM STATUS", "Telemetrie", "Hodnoty jsou z ROS témat, ne z demo generátoru") }
-        item {
-            PanelCard {
-                Text("POLOHA A POHYB", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                DataLine("X", t.x?.let { "%.3f m".format(it) } ?: "—")
-                DataLine("Y", t.y?.let { "%.3f m".format(it) } ?: "—")
-                DataLine("Orientace", t.yaw?.let { "${(it * 180f / PI.toFloat()).toInt()}°" } ?: "—")
-                DataLine("Lineární rychlost", t.linearSpeed?.let { "%.3f m/s".format(it) } ?: "—")
-                DataLine("Úhlová rychlost", t.angularSpeed?.let { "%.3f rad/s".format(it) } ?: "—")
-            }
-        }
-        item {
-            PanelCard {
-                Text("NAPÁJENÍ A SENZORY", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                DataLine("Baterie", t.batteryPercent?.let { "%.1f %%".format(it) } ?: "—")
-                DataLine("Napětí", t.voltage?.let { "%.2f V".format(it) } ?: "—")
-                DataLine("LiDAR paprsky", t.scan?.ranges?.size?.toString() ?: "—")
-                DataLine("Mapa", t.map?.let { "${it.width} × ${it.height} / %.3f m".format(it.resolution) } ?: "—")
-                DataLine("Přijaté zprávy", t.messages.toString())
-                DataLine("Poslední téma", t.lastTopic)
-                DataLine("Spojení", t.status)
-                if (t.error != null) DataLine("Chyba", t.error, Red)
-            }
-        }
-        item { Text("UDÁLOSTI", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp) }
-        if (logs.isEmpty()) item { Text("Zatím žádné události.", color = Muted, fontSize = 11.sp) }
-        items(logs) { entry ->
-            Text(entry, color = Muted, fontSize = 10.sp, modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(7.dp)).padding(9.dp))
-        }
-    }
-}
-
-@Composable
-private fun SetupScreen(
-    url: String, map: String, scan: String, odom: String, battery: String, cmd: String, goal: String,
-    connected: Boolean, onUrl: (String) -> Unit, onMap: (String) -> Unit, onScan: (String) -> Unit,
-    onOdom: (String) -> Unit, onBattery: (String) -> Unit, onCmd: (String) -> Unit, onGoal: (String) -> Unit,
-    onConnect: () -> Unit, onDisconnect: () -> Unit
-) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ScreenHeading("CONNECTION & TOPICS", "Nastavení", "ROS 2 přes rosbridge WebSocket")
-        PanelCard {
-            Text("PŘIPOJENÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text("Adresa rosbridge serveru", color = Muted, fontSize = 11.sp)
-            OutlinedTextField(value = url, onValueChange = onUrl, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("ws://IP_ROBOTA:9090") })
-            Text("Například ws://192.168.1.50:9090. Na robotovi musí běžet rosbridge_server pro ROS 2 a telefon musí mít síťovou dostupnost.", color = Muted, fontSize = 10.sp)
-            Spacer(Modifier.height(8.dp))
-            if (!connected) Button(onClick = onConnect, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("PŘIPOJIT ROS 2") }
-            else Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(48.dp), colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White)) { Text("ODPOJIT A ZASTAVIT") }
-        }
-        PanelCard {
-            Text("ROS TÉMATA", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            TopicField("Mapa · nav_msgs/OccupancyGrid", map, onMap)
-            TopicField("LiDAR · sensor_msgs/LaserScan", scan, onScan)
-            TopicField("Odometrie · nav_msgs/Odometry", odom, onOdom)
-            TopicField("Baterie · sensor_msgs/BatteryState", battery, onBattery)
-            TopicField("Povel pohybu · geometry_msgs/Twist", cmd, onCmd)
-            TopicField("Navigační cíl · PoseStamped", goal, onGoal)
-            Text("Názvy témat se musí shodovat s robotem. Pro cíl je potřeba kompatibilní navigační stack, který odebírá PoseStamped z nastaveného tématu.", color = Muted, fontSize = 10.sp)
-        }
-        PanelCard {
-            Text("CO TATO VERZE UMÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text("• Připojení přes rosbridge WebSocket\n• Živá occupancy grid mapa a LaserScan\n• Odometrie, rychlost a BatteryState\n• Povel Twist z joysticku\n• Cíl PoseStamped na mapě\n• Ručně nastavitelná témata", color = Ink, fontSize = 12.sp, lineHeight = 19.sp)
-            Spacer(Modifier.height(5.dp))
-            Text("Zatím neobsahuje nativní ROS 2 DDS ani MAVLink/ArduPilot. Pro ArduPilot je nutné doplnit samostatný MAVLink transport a bezpečné mapování režimů/armingu.", color = Amber, fontSize = 11.sp)
-        }
-    }
-}
-
-@Composable
-private fun TopicField(label: String, value: String, onValue: (String) -> Unit) {
-    OutlinedTextField(value = value, onValueChange = onValue, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(label) })
-}
-
-@Composable
-private fun StatusLine(label: String, value: String, good: Boolean) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(7.dp).background(if (good) Green else Amber, CircleShape))
-        Spacer(Modifier.width(8.dp))
-        Text(label, color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-        Text(value, color = if (good) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun DataLine(label: String, value: String, valueColor: Color = Ink) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-        Text(value, color = valueColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun Legend(color: Color, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(7.dp).background(color, CircleShape))
-        Spacer(Modifier.width(4.dp))
-        Text(label, color = Muted, fontSize = 9.sp)
-    }
-}
-
-@Composable
-private fun Joystick(
-    modifier: Modifier, throttle: Float, steering: Float, enabled: Boolean,
-    onMove: (Float, Float) -> Unit, onRelease: () -> Unit
-) {
-    var size by remember { mutableStateOf(IntSize.Zero) }
-    Canvas(modifier.onSizeChanged { size = it }.pointerInput(enabled, size) {
-        fun handle(p: Offset) {
-            if (!enabled || size.width <= 0 || size.height <= 0) return
-            val cx = size.width / 2f
-            val cy = size.height / 2f
-            val radius = min(size.width, size.height) * .34f
-            val x = ((p.x - cx) / radius).coerceIn(-1f, 1f)
-            val y = ((cy - p.y) / radius).coerceIn(-1f, 1f)
-            onMove(y, x)
-        }
+private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float) -> Unit, onRelease: () -> Unit) {
+    var pos by remember { mutableStateOf(Offset.Zero) }
+    var active by remember { mutableStateOf(false) }
+    Box(modifier.background(Panel, RoundedCornerShape(16.dp)).pointerInput(enabled) {
         detectDragGestures(
-            onDragStart = { handle(it) },
-            onDragEnd = { onRelease() },
-            onDragCancel = { onRelease() }
-        ) { change, _ -> change.consume(); handle(change.position) }
-    }) {
-        val cx = this.size.width / 2f
-        val cy = this.size.height / 2f
-        val radius = min(this.size.width, this.size.height) * .36f
-        drawCircle(Panel2, radius, Offset(cx, cy))
-        drawCircle(Border, radius, Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
-        drawLine(Border, Offset(cx - radius, cy), Offset(cx + radius, cy), strokeWidth = 1.dp.toPx())
-        drawLine(Border, Offset(cx, cy - radius), Offset(cx, cy + radius), strokeWidth = 1.dp.toPx())
-        val kx = cx + steering.coerceIn(-1f, 1f) * radius
-        val ky = cy - throttle.coerceIn(-1f, 1f) * radius
-        drawCircle(if (enabled) Cyan.copy(alpha = .22f) else Muted.copy(alpha = .13f), radius * .45f, Offset(kx, ky))
-        drawCircle(if (enabled) Cyan else Muted, radius * .23f, Offset(kx, ky))
-        drawCircle(if (enabled) Green else Muted, radius * .055f, Offset(cx, cy))
+            onDragStart = { p ->
+                active = true
+                val radius = size.minDimension / 2f
+                val dx = (p.x - size.width / 2f) / radius
+                val dy = (size.height / 2f - p.y) / radius
+                val len = hypot(dx, dy).coerceAtMost(1f)
+                pos = Offset(dx / maxOf(1f, hypot(dx, dy)), -dy / maxOf(1f, hypot(dx, dy))) * len
+                if (enabled) onMove(pos.y, pos.x)
+            },
+            onDrag = { change, _ ->
+                change.consume()
+                val radius = size.minDimension / 2f
+                val dx = (change.position.x - size.width / 2f) / radius
+                val dy = (size.height / 2f - change.position.y) / radius
+                val len = hypot(dx, dy).coerceAtMost(1f)
+                val divisor = maxOf(1f, hypot(dx, dy))
+                pos = Offset(dx / divisor * len, dy / divisor * len)
+                if (enabled) onMove(pos.y, pos.x)
+            },
+            onDragEnd = { pos = Offset.Zero; active = false; onRelease() },
+            onDragCancel = { pos = Offset.Zero; active = false; onRelease() }
+        )
+    }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(12.dp)) {
+            val c = Offset(size.width / 2f, size.height / 2f)
+            val r = size.minDimension * .46f
+            drawCircle(color = Border, radius = r, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+            drawCircle(color = Border.copy(alpha = .6f), radius = r * .62f, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+            drawLine(color = Border, start = Offset(c.x, c.y-r), end = Offset(c.x, c.y+r), strokeWidth = 1.dp.toPx())
+            drawLine(color = Border, start = Offset(c.x-r, c.y), end = Offset(c.x+r, c.y), strokeWidth = 1.dp.toPx())
+            val knob = Offset(c.x + pos.x * r, c.y - pos.y * r)
+            drawCircle(color = if (enabled && active) Cyan else Muted, radius = r * .23f, center = knob)
+            drawCircle(color = Ink.copy(alpha = .7f), radius = r * .23f, center = knob, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+        }
+        if (!enabled) Text(if (tSafeConnectionHint()) "PŘIPOJ A POVOL POHON" else "POHON ZAJIŠTĚN", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun tSafeConnectionHint() = true
+
+@Composable
+private fun TelemetryPage(t: RobotTelemetry) {
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 12.dp)) {
+        item { ScreenTitle("SYSTEM STATUS", "Telemetrie", "Pouze hodnoty skutečně přijaté z ESP32") }
+        item {
+            CardPanel {
+                Text("MOTORY A POVELY", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DataRow("Pohon", if (t.armed) "POVOLEN" else "ZAJIŠTĚN")
+                DataRow("Throttle", t.throttle?.let { "%.3f".format(it) } ?: "—")
+                DataRow("Steer", t.steer?.let { "%.3f".format(it) } ?: "—")
+                DataRow("PWM levý", t.leftPwm?.toString() ?: "—")
+                DataRow("PWM pravý", t.rightPwm?.toString() ?: "—")
+            }
+        }
+        item {
+            CardPanel {
+                Text("SENZORY A SYSTÉM", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DataRow("Napětí baterie", t.batteryV?.let { "%.2f V".format(it) } ?: "Nepřipojeno")
+                DataRow("Ultrazvuk", t.distanceCm?.let { "%.1f cm".format(it) } ?: "Nepřipojeno")
+                DataRow("Firmware", t.firmware)
+                DataRow("Uptime", t.uptimeMs?.let { "${it / 1000} s" } ?: "—")
+                DataRow("Počet zpráv", t.messages.toString())
+                DataRow("Poslední paket", t.lastMessage)
+                if (t.error != null) DataRow("Chyba", t.error, Red)
+            }
+        }
     }
 }
 
 @Composable
-private fun RobotMap(
-    telemetry: RobotTelemetry, modifier: Modifier, interactive: Boolean, onGoal: ((Float, Float) -> Unit)?
-) {
-    val map = telemetry.map
-    Canvas(modifier.background(Color(0xFF070C11), RoundedCornerShape(10.dp)).pointerInput(map, interactive, onGoal) {
-        if (interactive && onGoal != null) detectTapGestures { p ->
-            val grid = map ?: return@detectTapGestures
-            if (grid.width <= 0 || grid.height <= 0 || grid.resolution <= 0f) return@detectTapGestures
-            val worldW = grid.width * grid.resolution
-            val worldH = grid.height * grid.resolution
-            val scale = min(size.width / worldW, size.height / worldH) * .92f
-            val ox = (size.width - worldW * scale) / 2f
-            val oy = (size.height - worldH * scale) / 2f
-            val wx = grid.originX + (p.x - ox) / scale
-            val wy = grid.originY + worldH - (p.y - oy) / scale
-            if (wx >= grid.originX && wx <= grid.originX + worldW && wy >= grid.originY && wy <= grid.originY + worldH) onGoal(wx, wy)
-        }
-    }) {
-        val w = size.width
-        val h = size.height
-        drawRect(Color(0xFF070C11))
-        val grid = map
-        if (grid != null && grid.width > 0 && grid.height > 0 && grid.resolution > 0f) {
-            val worldW = grid.width * grid.resolution
-            val worldH = grid.height * grid.resolution
-            val scale = min(w / worldW, h / worldH) * .92f
-            val ox = (w - worldW * scale) / 2f
-            val oy = (h - worldH * scale) / 2f
-            val cellPx = grid.resolution * scale
-            val step = max(1, max(grid.width / 150, grid.height / 150))
-            var gy = 0
-            while (gy < grid.height) {
-                var gx = 0
-                while (gx < grid.width) {
-                    val index = gy * grid.width + gx
-                    val occ = if (index in grid.cells.indices) grid.cells[index] else -1
-                    val color = when {
-                        occ < 0 -> Color(0xFF101B25)
-                        occ >= 65 -> Color(0xFFDAE5EE)
-                        occ >= 25 -> Color(0xFF435466)
-                        else -> Color(0xFF182631)
+private fun ConnectionPage(t: RobotTelemetry, devices: List<BluetoothDevice>, selected: String, onSelect: (String) -> Unit, onRefresh: () -> Unit, onConnect: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ScreenTitle("LINK CONFIGURATION", "Bluetooth SPP", "Nejdřív spáruj ESP32 v nastavení Bluetooth telefonu")
+        CardPanel {
+            Text("SPÁROVANÁ ZAŘÍZENÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            if (devices.isEmpty()) {
+                Text("Žádná spárovaná zařízení. Spáruj ESP32 s názvem Robot007 v nastavení Androidu a obnov seznam.", color = Muted, fontSize = 12.sp)
+            } else {
+                devices.forEach { device ->
+                    val label = try { device.name ?: "Neznámé zařízení" } catch (_: SecurityException) { "Bluetooth zařízení" }
+                    Row(Modifier.fillMaxWidth().background(if (selected == device.address) Panel2 else Color.Transparent, RoundedCornerShape(9.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = selected == device.address, onClick = { onSelect(device.address) })
+                        Column(Modifier.weight(1f)) {
+                            Text(label, color = Ink, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(device.address, color = Muted, fontSize = 10.sp)
+                        }
+                        Text(if (selected == device.address) "VYBRÁNO" else "", color = Cyan, fontSize = 8.sp)
                     }
-                    val x = ox + gx * cellPx
-                    val y = oy + (grid.height - gy - step) * cellPx
-                    drawRect(color, Offset(x, y), Size(cellPx * step + .5f, cellPx * step + .5f))
-                    gx += step
                 }
-                gy += step
             }
-            drawGridLines(ox, oy, worldW * scale, worldH * scale)
-            val rx = telemetry.x ?: (grid.originX + worldW / 2f)
-            val ry = telemetry.y ?: (grid.originY + worldH / 2f)
-            val yaw = telemetry.yaw ?: 0f
-            val sx = ox + (rx - grid.originX) * scale
-            val sy = oy + (worldH - (ry - grid.originY)) * scale
-            drawScan(telemetry.scan, sx, sy, yaw, scale, ox, oy, grid.originX, grid.originY, worldH, true)
-            drawRobot(sx, sy, yaw)
-            if (interactive) {
-                drawCircle(Amber, 6.dp.toPx(), Offset(w * .5f, h * .07f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onRefresh, modifier = Modifier.weight(1f)) { Text("OBNOVIT") }
+                Button(onClick = onConnect, modifier = Modifier.weight(1f), enabled = !t.connected && selected.isNotBlank()) { Text("PŘIPOJIT") }
             }
-        } else {
-            val cx = w / 2f
-            val cy = h / 2f
-            val scale = min(w, h) / 12f
-            for (i in 1..5) drawCircle(Border.copy(alpha = .55f), i * scale, Offset(cx, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx()))
-            drawLine(Border, Offset(cx, 0f), Offset(cx, h), 1.dp.toPx())
-            drawLine(Border, Offset(0f, cy), Offset(w, cy), 1.dp.toPx())
-            drawScan(telemetry.scan, cx, cy, telemetry.yaw ?: 0f, scale, 0f, 0f, 0f, 0f, 0f, false)
-            drawRobot(cx, cy, telemetry.yaw ?: 0f)
-
+            if (t.connected) Button(onClick = { /* disconnect is handled by top bar */ }, modifier = Modifier.fillMaxWidth(), enabled = false) { Text("SPP SPOJENÍ AKTIVNÍ") }
+        }
+        CardPanel {
+            Text("PROTOKOL", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            DataRow("Transport", "Bluetooth Classic SPP")
+            DataRow("Formát", "JSON, jeden paket na řádek")
+            DataRow("Rychlost", "SPP stream")
+            DataRow("Firmware", t.firmware)
+            Text("Aplikace nevyhledává cizí zařízení automaticky; pracuje se spárovanými zařízeními.", color = Muted, fontSize = 10.sp)
         }
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawGridLines(ox: Float, oy: Float, width: Float, height: Float) {
-    val spacing = 40.dp.toPx()
-    var x = ox
-    while (x <= ox + width) { drawLine(Border.copy(alpha = .25f), Offset(x, oy), Offset(x, oy + height), 1.dp.toPx()); x += spacing }
-    var y = oy
-    while (y <= oy + height) { drawLine(Border.copy(alpha = .25f), Offset(ox, y), Offset(ox + width, y), 1.dp.toPx()); y += spacing }
-}
-
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawScan(
-    scan: LaserScan?, sx: Float, sy: Float, yaw: Float, scale: Float,
-    ox: Float, oy: Float, originX: Float, originY: Float, worldH: Float, hasMap: Boolean
-) {
-    if (scan == null || scan.ranges.isEmpty()) return
-    val stride = max(1, scan.ranges.size / 500)
-    var i = 0
-    while (i < scan.ranges.size) {
-        val range = scan.ranges[i]
-        if (range.isFinite() && range >= scan.rangeMin && range <= scan.rangeMax) {
-            val a = yaw + scan.angleMin + i * scan.angleIncrement
-            val dx = cos(a) * range
-            val dy = sin(a) * range
-            drawCircle(Cyan, 1.8.dp.toPx(), Offset(sx + dx * scale, sy - dy * scale))
-        }
-        i += stride
+@Composable
+private fun DataRow(label: String, value: String, valueColor: Color = Ink) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+        Text(label, color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+        Text(value, color = valueColor, fontSize = 11.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1.25f))
     }
-}
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRobot(x: Float, y: Float, yaw: Float) {
-    drawCircle(Green.copy(alpha = .2f), 13.dp.toPx(), Offset(x, y))
-    drawCircle(Green, 6.dp.toPx(), Offset(x, y))
-    drawLine(Green, Offset(x, y), Offset(x + cos(yaw) * 22.dp.toPx(), y - sin(yaw) * 22.dp.toPx()), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
 }
