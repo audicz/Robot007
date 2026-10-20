@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -176,6 +177,9 @@ class BluetoothLink(private val onState: (RobotTelemetry) -> Unit) {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         setContent { RobotCockpitApp() }
     }
 }
@@ -352,7 +356,7 @@ private fun MapDashboard(
 
         // Floating dashboard overlays: the map remains edge-to-edge behind every control.
         Column(
-            Modifier.align(Alignment.TopStart).fillMaxWidth()
+            Modifier.align(Alignment.TopStart).fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars)
                 .background(Color(0xE6080D13)).padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -404,7 +408,7 @@ private fun MapDashboard(
 
         // Joystick sits over the map; releasing it always sends neutral.
         Column(
-            Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 18.dp)
+            Modifier.align(Alignment.BottomStart).windowInsetsPadding(WindowInsets.navigationBars).padding(start = 12.dp, bottom = 18.dp)
                 .widthIn(max = 210.dp).fillMaxWidth(.48f)
                 .background(Color(0xD9111B26), RoundedCornerShape(14.dp)).padding(8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -415,7 +419,7 @@ private fun MapDashboard(
         }
 
         Column(
-            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 18.dp),
+            Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(end = 12.dp, bottom = 18.dp),
             horizontalAlignment = Alignment.End,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
