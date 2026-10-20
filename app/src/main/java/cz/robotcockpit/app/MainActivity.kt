@@ -7,6 +7,9 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.webkit.WebSettings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,6 +32,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -216,56 +220,213 @@ fun RobotCockpitApp() {
     }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Green, background = Bg, surface = Panel, onPrimary = Bg, onBackground = Ink, onSurface = Ink, error = Red)) {
-        Column(Modifier.fillMaxSize().background(Bg)) {
-            Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(40.dp).background(Cyan.copy(alpha = .13f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
-                        Text("R7", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Black)
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("ROBOT COCKPIT", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                        Text("ESP32 · BLUETOOTH CLASSIC SPP", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(8.dp).background(if (t.connected) Green else Amber, CircleShape))
-                            Spacer(Modifier.width(5.dp))
-                            Text(if (t.connected) "ONLINE" else "OFFLINE", color = if (t.connected) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Text(if (armed && t.connected) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && t.connected) Green else Red, fontSize = 8.sp)
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(t.status, color = if (t.connected) Green else Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
-                    OutlinedButton(onClick = { if (t.connected) { link.disconnect(); armed = false } else { refreshDevices(); page = 3 } }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
-                        Text(if (t.connected) "ODPOJIT" else "PŘIPOJIT", fontSize = 10.sp)
-                    }
-                }
-                if (t.error != null) Text(t.error ?: "", color = Red, fontSize = 10.sp)
-            }
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (page) {
-                    0 -> OverviewPage(t, armed, maxPower, onDrivePage = { page = 1 }, onConnectPage = { refreshDevices(); page = 3 }, onArm = {
+        Box(Modifier.fillMaxSize().background(Bg)) {
+            if (page == 0) {
+                MapDashboard(
+                    t = t,
+                    armed = armed,
+                    power = maxPower,
+                    onPower = { maxPower = it },
+                    onArm = {
                         if (t.connected) { link.arm(true); armed = true; command = "POHON POVOLEN" }
-                    }, onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "NOUZOVÝ STOP" })
-                    1 -> DrivePage(t, armed, maxPower, onPower = { maxPower = it }, onArm = { link.arm(true); armed = true; command = "POHON POVOLEN" }, onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "NOUZOVÝ STOP" }, onDrive = { y, x ->
+                    },
+                    onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "STOP" },
+                    onDrive = { y, x ->
                         val throttle = y * maxPower
                         val steer = x * maxPower
-                        if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
-                    }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
-                    2 -> TelemetryPage(t)
-                    else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
-                        val device = paired.firstOrNull { it.address == selectedAddress }
-                        if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
-                    })
+                        if (t.connected && armed) {
+                            link.sendDrive(throttle, steer, true)
+                            command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}"
+                        }
+                    },
+                    onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" },
+                    onConnect = { refreshDevices(); page = 3 },
+                    onTelemetry = { page = 2 },
+                    onDrivePage = { page = 1 }
+                )
+            } else {
+                Column(Modifier.fillMaxSize().background(Bg)) {
+                    Column(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(40.dp).background(Cyan.copy(alpha = .13f), RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
+                                Text("R7", color = Cyan, fontSize = 18.sp, fontWeight = FontWeight.Black)
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("ROBOT COCKPIT", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                                Text("ESP32 · BLUETOOTH CLASSIC SPP", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(8.dp).background(if (t.connected) Green else Amber, CircleShape))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text(if (t.connected) "ONLINE" else "OFFLINE", color = if (t.connected) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(if (armed && t.connected) "POHON POVOLEN" else "POHON ZAJIŠTĚN", color = if (armed && t.connected) Green else Red, fontSize = 8.sp)
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(t.status, color = if (t.connected) Green else Muted, fontSize = 10.sp, modifier = Modifier.weight(1f))
+                            OutlinedButton(onClick = { if (t.connected) { link.disconnect(); armed = false } else { refreshDevices(); page = 3 } }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp)) {
+                                Text(if (t.connected) "ODPOJIT" else "PŘIPOJIT", fontSize = 10.sp)
+                            }
+                        }
+                        if (t.error != null) Text(t.error ?: "", color = Red, fontSize = 10.sp)
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        when (page) {
+                            1 -> DrivePage(t, armed, maxPower, onPower = { maxPower = it }, onArm = { if (t.connected) { link.arm(true); armed = true; command = "POHON POVOLEN" } }, onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "NOUZOVÝ STOP" }, onDrive = { y, x ->
+                                val throttle = y * maxPower
+                                val steer = x * maxPower
+                                if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
+                            }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
+                            2 -> TelemetryPage(t)
+                            else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
+                                val device = paired.firstOrNull { it.address == selectedAddress }
+                                if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
+                            })
+                        }
+                    }
+                    NavigationBar(containerColor = Panel, contentColor = Ink) {
+                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH").forEachIndexed { i, label ->
+                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+                        }
+                    }
                 }
             }
-            NavigationBar(containerColor = Panel, contentColor = Ink) {
-                listOf("PŘEHLED", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH").forEachIndexed { i, label ->
-                    NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌂", "✣", "⌁", "ᛒ")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+        }
+    }
+}
+
+
+@Composable
+private fun MapDashboard(
+    t: RobotTelemetry,
+    armed: Boolean,
+    power: Float,
+    onPower: (Float) -> Unit,
+    onArm: () -> Unit,
+    onStop: () -> Unit,
+    onDrive: (Float, Float) -> Unit,
+    onRelease: () -> Unit,
+    onConnect: () -> Unit,
+    onTelemetry: () -> Unit,
+    onDrivePage: () -> Unit
+) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xFF101820))) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.cacheMode = WebSettings.LOAD_DEFAULT
+                    webViewClient = WebViewClient()
+                    setBackgroundColor(android.graphics.Color.rgb(16, 24, 32))
+                    loadDataWithBaseURL(
+                        "https://www.openstreetmap.org/",
+                        """
+                        <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+                        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+                        <style>html,body,#map{height:100%;width:100%;margin:0;padding:0;background:#101820;overflow:hidden} .leaflet-control-attribution{font-size:9px!important;background:rgba(8,13,19,.72)!important;color:#c4d2df!important}.leaflet-control-attribution a{color:#45d9e8!important}.leaflet-control-zoom a{background:#111b26!important;color:#45d9e8!important;border-color:#2a3c4e!important}</style>
+                        </head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+                        <script>
+                        const map=L.map('map',{zoomControl:false,attributionControl:true}).setView([49.8,15.5],7);
+                        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+                        L.control.zoom({position:'bottomright'}).addTo(map);
+                        const waiting=L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;border:3px solid white;background:#ffbd59;box-shadow:0 0 0 6px #ffbd5938"></div>',iconSize:[20,20],iconAnchor:[10,10]});
+                        const hint=L.control({position:'topright'});hint.onAdd=function(){const d=L.DomUtil.create('div');d.innerHTML='<div style="font:12px sans-serif;color:#eaf3fb;background:#080d13d9;padding:8px 10px;border-radius:8px">MAPA ONLINE · GPS ROBOTA NEPŘIJÍMÁN</div>';return d};hint.addTo(map);
+                        window.robotMap={setRobotPosition:function(lat,lon){if(window.robotMarker){window.robotMarker.setLatLng([lat,lon])}else{window.robotMarker=L.marker([lat,lon]).addTo(map).bindPopup('Robot ESP32')}map.panTo([lat,lon])}};
+                        setTimeout(()=>map.invalidateSize(),250);
+                        </script></body></html>
+                        """.trimIndent(),
+                        "text/html",
+                        "UTF-8",
+                        null
+                    )
                 }
+            },
+            update = { it.onResume() }
+        )
+
+        // Floating dashboard overlays: the map remains edge-to-edge behind every control.
+        Column(
+            Modifier.align(Alignment.TopStart).fillMaxWidth()
+                .background(Color(0xE6080D13)).padding(horizontal = 14.dp, vertical = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(36.dp).background(Cyan.copy(alpha = .17f), RoundedCornerShape(9.dp)), contentAlignment = Alignment.Center) {
+                    Text("R7", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                }
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("ROBOT COCKPIT", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.Black, letterSpacing = .8.sp)
+                    Text(if (t.connected) "SPP ONLINE · ${t.robotName}" else "SPP OFFLINE · MAPA ONLINE", color = if (t.connected) Green else Amber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(if (armed && t.connected) "ARMED" else "SAFE", color = if (armed && t.connected) Green else Red, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = if (t.connected) onStop else onConnect,
+                    colors = ButtonDefaults.buttonColors(containerColor = if (t.connected) Red else Cyan, contentColor = if (t.connected) Color.White else Bg),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.height(38.dp)
+                ) { Text(if (t.connected) "■ STOP" else "PŘIPOJIT", fontSize = 10.sp, fontWeight = FontWeight.Black) }
+            }
+            if (t.error != null) Text(t.error ?: "", color = Red, fontSize = 10.sp, maxLines = 1)
+        }
+
+        Column(
+            Modifier.align(Alignment.CenterStart).padding(start = 12.dp).widthIn(max = 176.dp)
+                .background(Color(0xE6111B26), RoundedCornerShape(12.dp))
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("ROBOT STATUS", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+            Text(if (t.connected) "PŘIPOJENO" else "ČEKÁ NA SPP", color = if (t.connected) Green else Amber, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("BATERIE", color = Muted, fontSize = 8.sp)
+                    Text(t.batteryV?.let { "%.1f V".format(it) } ?: "—", color = Cyan, fontSize = 17.sp, fontWeight = FontWeight.Black)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text("VZDÁLENOST", color = Muted, fontSize = 8.sp)
+                    Text(t.distanceCm?.let { "%.0f cm".format(it) } ?: "—", color = Amber, fontSize = 15.sp, fontWeight = FontWeight.Black)
+                }
+            }
+            Text("L  ${t.leftPwm?.toString() ?: "—"}     R  ${t.rightPwm?.toString() ?: "—"}", color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("LIMIT ${(power * 100).toInt()} %", color = Muted, fontSize = 8.sp)
+            Slider(value = power, onValueChange = onPower, valueRange = 0.1f..0.6f, enabled = !armed, modifier = Modifier.height(24.dp))
+            Button(onClick = onArm, enabled = t.connected && !armed, modifier = Modifier.fillMaxWidth().height(36.dp), contentPadding = PaddingValues(0.dp)) {
+                Text("POVOLIT POHON", fontSize = 9.sp, fontWeight = FontWeight.Black)
+            }
+        }
+
+        // Joystick sits over the map; releasing it always sends neutral.
+        Column(
+            Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 18.dp)
+                .widthIn(max = 210.dp).fillMaxWidth(.48f)
+                .background(Color(0xD9111B26), RoundedCornerShape(14.dp)).padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("MANUÁLNÍ ŘÍZENÍ", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.Black)
+            Joystick(Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 205.dp), enabled = t.connected && armed, onMove = onDrive, onRelease = onRelease)
+            Text(if (armed && t.connected) "DRŽ PRO POHYB · PUSŤ PRO NEUTRÁL" else "PŘIPOJ A POVOL POHON", color = Muted, fontSize = 8.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Column(
+            Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 18.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = onTelemetry, colors = ButtonDefaults.buttonColors(containerColor = Color(0xE6111B26), contentColor = Cyan), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                Text("TELEMETRIE", fontSize = 9.sp, fontWeight = FontWeight.Black)
+            }
+            Button(onClick = onDrivePage, colors = ButtonDefaults.buttonColors(containerColor = Color(0xE6111B26), contentColor = Ink), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                Text("ŘÍZENÍ CELÁ OBRAZOVKA", fontSize = 9.sp, fontWeight = FontWeight.Black)
+            }
+            Button(onClick = onConnect, colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Bg), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                Text("BLUETOOTH", fontSize = 9.sp, fontWeight = FontWeight.Black)
             }
         }
     }
