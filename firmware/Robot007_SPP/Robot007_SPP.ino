@@ -21,7 +21,7 @@
 BluetoothSerial SerialBT;
 
 static const char *DEVICE_NAME = "Robot007";
-static const char *FIRMWARE_VERSION = "Robot007-SPP-0.3";
+static const char *FIRMWARE_VERSION = "Robot007-SPP-0.4";
 static const bool ENABLE_MOTOR_OUTPUTS = false; // Change only after checking the driver and pins.
 
 // Example pin mapping for a dual H-bridge: PWM + two direction pins per motor.
@@ -155,9 +155,17 @@ static void handleCommand(const String &line) {
       stopRobot("command disarmed");
       return;
     }
-    // Commands refresh the watchdog. An explicit arm packet is also required
-    // by the app before its local controls will send nonzero commands.
-    armed = true;
+    // A drive packet must never arm the robot. Require a prior explicit "arm".
+    if (!armed) {
+      throttleCommand = 0.0f;
+      steerCommand = 0.0f;
+      applyMotorOutput();
+      return;
+    }
+    if (!requestedArmed) {
+      stopRobot("command disarmed");
+      return;
+    }
     throttleCommand = constrain(readNumber(line, "throttle", 0.0f), -1.0f, 1.0f);
     steerCommand = constrain(readNumber(line, "steer", 0.0f), -1.0f, 1.0f);
     lastCommandMs = millis();
@@ -208,8 +216,9 @@ void setup() {
   if (ENABLE_MOTOR_OUTPUTS) {
     pinMode(LEFT_PWM_PIN, OUTPUT); pinMode(LEFT_IN1_PIN, OUTPUT); pinMode(LEFT_IN2_PIN, OUTPUT);
     pinMode(RIGHT_PWM_PIN, OUTPUT); pinMode(RIGHT_IN1_PIN, OUTPUT); pinMode(RIGHT_IN2_PIN, OUTPUT);
-    analogWriteResolution(LEFT_PWM_PIN, 8); analogWriteFrequency(LEFT_PWM_PIN, 5000);
-    analogWriteResolution(RIGHT_PWM_PIN, 8); analogWriteFrequency(RIGHT_PWM_PIN, 5000);
+    analogWriteResolution(8);
+    analogWriteFrequency(LEFT_PWM_PIN, 5000);
+    analogWriteFrequency(RIGHT_PWM_PIN, 5000);
     applyMotorOutput();
   }
   if (BATTERY_ADC_PIN >= 0) { pinMode(BATTERY_ADC_PIN, INPUT); analogReadResolution(12); }
