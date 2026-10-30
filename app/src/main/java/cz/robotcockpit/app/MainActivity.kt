@@ -196,7 +196,17 @@ fun RobotCockpitApp() {
     var armed by remember { mutableStateOf(false) }
     var command by remember { mutableStateOf("STOP") }
     val adapter = remember { BluetoothAdapter.getDefaultAdapter() }
-    val link = remember { BluetoothLink { t = it; if (!it.connected) armed = false } }
+    val link = remember {
+        BluetoothLink { state ->
+            t = state
+            if (!state.connected) {
+                armed = false
+            } else if (state.lastMessage.startsWith("{\"type\":\"telemetry\"")) {
+                // Firmware telemetry is authoritative: the watchdog may disarm the robot.
+                armed = state.armed
+            }
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             paired = try { adapter?.bondedDevices?.toList()?.sortedBy { it.name ?: it.address } ?: emptyList() } catch (_: SecurityException) { emptyList() }
@@ -535,6 +545,15 @@ private fun DrivePage(t: RobotTelemetry, armed: Boolean, power: Float, onPower: 
 private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float) -> Unit, onRelease: () -> Unit) {
     var pos by remember { mutableStateOf(Offset.Zero) }
     var active by remember { mutableStateOf(false) }
+    val latestPos by rememberUpdatedState(pos)
+    val latestOnMove by rememberUpdatedState(onMove)
+    LaunchedEffect(active, enabled) {
+        while (active && enabled) {
+            // Keep the firmware watchdog alive while the user holds the stick still.
+            latestOnMove(latestPos.y, latestPos.x)
+            kotlinx.coroutines.delay(150)
+        }
+    }
     Box(modifier.background(Panel, RoundedCornerShape(16.dp)).pointerInput(enabled) {
         detectDragGestures(
             onDragStart = { p ->
@@ -543,7 +562,7 @@ private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float
                 val dx = (p.x - size.width / 2f) / radius
                 val dy = (size.height / 2f - p.y) / radius
                 val len = sqrt(dx * dx + dy * dy).coerceAtMost(1f)
-                pos = Offset(dx / maxOf(1f, sqrt(dx * dx + dy * dy)), -dy / maxOf(1f, sqrt(dx * dx + dy * dy))) * len
+                pos = Offset(dx / maxOf(1f, sqrt(dx * dx + dy * dy)), dy / maxOf(1f, sqrt(dx * dx + dy * dy))) * len
                 if (enabled) onMove(pos.y, pos.x)
             },
             onDrag = { change, _ ->
