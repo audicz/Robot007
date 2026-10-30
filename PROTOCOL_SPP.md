@@ -26,7 +26,9 @@ Stop/disarm:
 
 - Positive throttle means forward; negative means reverse.
 - Positive steer means turn right. Firmware mixes left = throttle + steer and right = throttle - steer. Reverse motor polarity in the driver configuration if your robot's wiring differs.
-- The app sends neutral on joystick release and stop/disarm when STOP or disconnect is requested.\n- The ESP32 accepts drive commands only after an explicit `arm` command; a `cmd` packet cannot arm the robot.\n- While the joystick is held, the app repeats the current command every 150 ms to refresh the 700 ms watchdog.
+- The app sends neutral on joystick release and stop/disarm when STOP or disconnect is requested.
+- The ESP32 accepts drive commands only after an explicit `arm` command; a `cmd` packet cannot arm the robot.
+- While the joystick is held, the app repeats the current command every 150 ms to refresh the 700 ms watchdog.
 - Firmware command watchdog disarms and zeros outputs if a valid drive command has not arrived for 700 ms.
 
 ## ESP32 → App
@@ -38,10 +40,10 @@ Handshake response:
 
 Telemetry, normally every 200 ms:
 ```json
-{"type":"telemetry","protocol":1,"firmware":"Robot007-SPP-0.3","armed":false,"throttle":0,"steer":0,"leftPwm":0,"rightPwm":0,"uptimeMs":12345,"batteryV":null,"distanceCm":null}
+{"type":"telemetry","protocol":1,"firmware":"Robot007-SPP-0.4","armed":false,"throttle":0,"steer":0,"leftPwm":0,"rightPwm":0,"uptimeMs":12345,"batteryV":null,"distanceCm":null,"latitude":null,"longitude":null}
 ```
 
-Unavailable optional sensors must be represented as JSON `null`, not fabricated values.
+Unavailable optional sensors must be represented as JSON `null`, not fabricated values. The Android map displays the robot marker only when both `latitude` and `longitude` are real numeric GPS coordinates in valid ranges. The current generic firmware does not read a GPS module yet; wire/configure a GPS receiver before emitting these fields.
 
 ## Safety and setup
 
