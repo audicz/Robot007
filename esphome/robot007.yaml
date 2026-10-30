@@ -1,0 +1,64 @@
+substitutions:
+  name: robot007
+  friendly_name: Robot007
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  comment: "Robot controller: ESPHome Wi-Fi/API/OTA plus Bluetooth Classic SPP"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [robot007_spp]
+
+logger:
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Robot007 Fallback"
+    password: !secret robot007_fallback_password
+
+captive_portal:
+
+# Motor output stays disabled until the real driver and GPIO wiring are verified.
+# This configuration assumes a classic ESP32-WROOM-32; S2/S3/C3 do not support SPP.
+robot007_spp:
+  id: robot_spp
+  device_name: "Robot007"
+  enable_motor_outputs: false
+  left_pwm_pin: 25
+  left_in1_pin: 26
+  left_in2_pin: 27
+  right_pwm_pin: 14
+  right_in1_pin: 32
+  right_in2_pin: 33
+  battery_adc_pin: -1
+  ultrasonic_trig_pin: -1
+  ultrasonic_echo_pin: -1
+  battery_divider_ratio: 2.0
+  armed:
+    name: "Robot007 Pohon povolen"
+  left_pwm:
+    name: "Robot007 Levý PWM"
+  right_pwm:
+    name: "Robot007 Pravý PWM"
+  battery_voltage:
+    name: "Robot007 Napětí baterie"
+  distance:
+    name: "Robot007 Vzdálenost"
+  status:
+    name: "Robot007 Stav SPP"
