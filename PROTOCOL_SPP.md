@@ -26,14 +26,14 @@ Stop/disarm:
 
 - Positive throttle means forward; negative means reverse.
 - Positive steer means turn right. Firmware mixes left = throttle + steer and right = throttle - steer. Reverse motor polarity in the driver configuration if your robot's wiring differs.
-- The app sends neutral on joystick release and stop/disarm when STOP or disconnect is requested.
+- The app sends neutral on joystick release and stop/disarm when STOP or disconnect is requested.\n- The ESP32 accepts drive commands only after an explicit `arm` command; a `cmd` packet cannot arm the robot.\n- While the joystick is held, the app repeats the current command every 150 ms to refresh the 700 ms watchdog.
 - Firmware command watchdog disarms and zeros outputs if a valid drive command has not arrived for 700 ms.
 
 ## ESP32 → App
 
 Handshake response:
 ```json
-{"type":"hello","protocol":1,"firmware":"Robot007-SPP-0.3"}
+{"type":"hello","protocol":1,"firmware":"Robot007-SPP-0.4"}
 ```
 
 Telemetry, normally every 200 ms:
