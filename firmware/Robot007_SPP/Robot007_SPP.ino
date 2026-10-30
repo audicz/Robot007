@@ -162,10 +162,6 @@ static void handleCommand(const String &line) {
       applyMotorOutput();
       return;
     }
-    if (!requestedArmed) {
-      stopRobot("command disarmed");
-      return;
-    }
     throttleCommand = constrain(readNumber(line, "throttle", 0.0f), -1.0f, 1.0f);
     steerCommand = constrain(readNumber(line, "steer", 0.0f), -1.0f, 1.0f);
     lastCommandMs = millis();
@@ -216,9 +212,8 @@ void setup() {
   if (ENABLE_MOTOR_OUTPUTS) {
     pinMode(LEFT_PWM_PIN, OUTPUT); pinMode(LEFT_IN1_PIN, OUTPUT); pinMode(LEFT_IN2_PIN, OUTPUT);
     pinMode(RIGHT_PWM_PIN, OUTPUT); pinMode(RIGHT_IN1_PIN, OUTPUT); pinMode(RIGHT_IN2_PIN, OUTPUT);
-    analogWriteResolution(8);
-    analogWriteFrequency(LEFT_PWM_PIN, 5000);
-    analogWriteFrequency(RIGHT_PWM_PIN, 5000);
+    analogWriteResolution(LEFT_PWM_PIN, 8); analogWriteFrequency(LEFT_PWM_PIN, 5000);
+    analogWriteResolution(RIGHT_PWM_PIN, 8); analogWriteFrequency(RIGHT_PWM_PIN, 5000);
     applyMotorOutput();
   }
   if (BATTERY_ADC_PIN >= 0) { pinMode(BATTERY_ADC_PIN, INPUT); analogReadResolution(12); }
