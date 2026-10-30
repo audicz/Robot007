@@ -66,6 +66,8 @@ data class RobotTelemetry(
     val rightPwm: Int? = null,
     val batteryV: Double? = null,
     val distanceCm: Double? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
     val uptimeMs: Long? = null,
     val firmware: String = "—",
     val lastMessage: String = "—",
@@ -110,6 +112,8 @@ class BluetoothLink(private val onState: (RobotTelemetry) -> Unit) {
                                 rightPwm = if (j.has("rightPwm")) j.optInt("rightPwm") else null,
                                 batteryV = if (j.has("batteryV") && !j.isNull("batteryV")) j.optDouble("batteryV") else null,
                                 distanceCm = if (j.has("distanceCm") && !j.isNull("distanceCm")) j.optDouble("distanceCm") else null,
+                                latitude = if (j.has("latitude") && !j.isNull("latitude")) j.optDouble("latitude") else null,
+                                longitude = if (j.has("longitude") && !j.isNull("longitude")) j.optDouble("longitude") else null,
                                 uptimeMs = if (j.has("uptimeMs")) j.optLong("uptimeMs") else null,
                                 firmware = j.optString("firmware", current.firmware),
                                 lastMessage = line,
@@ -350,8 +354,8 @@ private fun MapDashboard(
                         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
                         L.control.zoom({position:'bottomright'}).addTo(map);
                         const waiting=L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;border:3px solid white;background:#ffbd59;box-shadow:0 0 0 6px #ffbd5938"></div>',iconSize:[20,20],iconAnchor:[10,10]});
-                        const hint=L.control({position:'topright'});hint.onAdd=function(){const d=L.DomUtil.create('div');d.innerHTML='<div style="font:12px sans-serif;color:#eaf3fb;background:#080d13d9;padding:8px 10px;border-radius:8px">MAPA ONLINE · GPS ROBOTA NEPŘIJÍMÁN</div>';return d};hint.addTo(map);
-                        window.robotMap={setRobotPosition:function(lat,lon){if(window.robotMarker){window.robotMarker.setLatLng([lat,lon])}else{window.robotMarker=L.marker([lat,lon]).addTo(map).bindPopup('Robot ESP32')}map.panTo([lat,lon])}};
+                        const hint=L.control({position:'topright'});hint.onAdd=function(){const d=L.DomUtil.create('div');d.innerHTML='<div id="gps-hint" style="font:12px sans-serif;color:#eaf3fb;background:#080d13d9;padding:8px 10px;border-radius:8px">MAPA ONLINE · GPS ROBOTA NEPŘIJÍMÁN</div>';return d};hint.addTo(map);
+                        window.robotMap={setRobotPosition:function(lat,lon){if(!Number.isFinite(lat)||!Number.isFinite(lon)||lat < -90||lat > 90||lon < -180||lon > 180)return;const first=!window.robotMarker;if(window.robotMarker){window.robotMarker.setLatLng([lat,lon])}else{window.robotMarker=L.marker([lat,lon]).addTo(map).bindPopup('Robot ESP32')}if(first)map.panTo([lat,lon]);const label=document.getElementById('gps-hint');if(label)label.textContent='GPS ROBOTA AKTIVNÍ'}};
                         setTimeout(()=>map.invalidateSize(),250);
                         </script></body></html>
                         """.trimIndent(),
@@ -361,7 +365,14 @@ private fun MapDashboard(
                     )
                 }
             },
-            update = { it.onResume() }
+            update = { view ->
+                view.onResume()
+                val lat = t.latitude
+                val lon = t.longitude
+                if (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0) {
+                    view.evaluateJavascript("window.robotMap&&window.robotMap.setRobotPosition($lat,$lon);", null)
+                }
+            }
         )
 
         // Floating dashboard overlays: the map remains edge-to-edge behind every control.
