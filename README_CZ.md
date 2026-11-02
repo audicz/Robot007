@@ -1,3 +1,7 @@
+## MAROS VESC Cockpit V24.7.2 compatibility
+
+The Android PHONE BRAIN app is a separate Android application. The V24.7.2 ZIP contains ESPHome firmware and display-side protocols, not an Android Gradle project. The current Android build provides the robot SPP cockpit and does not yet implement the V24.7.2 BLE VESC/JBD/LDS client protocols. Do not pair it with motor-control BLE peripherals or assume those pages are live until their protocol adapters are implemented and tested. See `PHONE_BRAIN_ARCHITECTURE.md`.
+
 # MAROS HOME ROBOT — PHONE BRAIN\n\nAndroid phone is the dedicated robot computer; ESP32 handles real-time drive and safety over Bluetooth Classic SPP. See [PHONE_BRAIN_ARCHITECTURE.md](PHONE_BRAIN_ARCHITECTURE.md) for the target architecture and implementation phases.\n\n# Existing Robot Cockpit — ESP32 Bluetooth SPP
 
 Android ground-control app (Kotlin + Jetpack Compose) for a robot controlled by a classic ESP32 over Bluetooth SPP. No ROS bridge or Wi-Fi is used for the control link.
