@@ -1,4 +1,4 @@
-# Robot Cockpit — ESP32 Bluetooth SPP
+# MAROS HOME ROBOT — PHONE BRAIN\n\nAndroid phone is the dedicated robot computer; ESP32 handles real-time drive and safety over Bluetooth Classic SPP. See [PHONE_BRAIN_ARCHITECTURE.md](PHONE_BRAIN_ARCHITECTURE.md) for the target architecture and implementation phases.\n\n# Existing Robot Cockpit — ESP32 Bluetooth SPP
 
 Android ground-control app (Kotlin + Jetpack Compose) for a robot controlled by a classic ESP32 over Bluetooth SPP. No ROS bridge or Wi-Fi is used for the control link.
 
