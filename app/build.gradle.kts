@@ -12,8 +12,8 @@ android {
         applicationId = "cz.robotcockpit.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4-spp"
+        versionCode = 5
+        versionName = "0.5-phone-brain"
     }
 
     buildFeatures { compose = true }
