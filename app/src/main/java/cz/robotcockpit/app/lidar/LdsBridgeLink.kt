@@ -33,7 +33,8 @@ data class LdsBridgeState(
     val validPoints: Int = 0,
     val nearestMeters: Float? = null,
     val lastScan: MarosLdsScan? = null,
-    val error: String? = null
+    val error: String? = null,
+    val devices: List<LdsBridgeDevice> = emptyList()
 )
 
 /**
@@ -81,6 +82,7 @@ class LdsBridgeLink(
         }
         scanner = leScanner
         found.clear()
+        publish(state.copy(scanning = true, status = "Vyhledávám Xiaomi LDS Bridge…", error = null, devices = emptyList()))
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val record = result.scanRecord
@@ -96,8 +98,11 @@ class LdsBridgeLink(
                     address = result.device.address,
                     rssi = result.rssi
                 )
-                synchronized(this@LdsBridgeLink) { found[device.address] = device }
-                publish(state.copy(scanning = true, status = "Nalezen LDS Bridge", error = null))
+                val snapshot = synchronized(this@LdsBridgeLink) {
+                    found[device.address] = device
+                    found.values.sortedByDescending { it.rssi }
+                }
+                publish(state.copy(scanning = true, status = "Nalezen LDS Bridge", error = null, devices = snapshot))
             }
 
             override fun onScanFailed(errorCode: Int) {
@@ -105,7 +110,6 @@ class LdsBridgeLink(
             }
         }
         scanCallback = callback
-        publish(state.copy(scanning = true, status = "Vyhledávám Xiaomi LDS Bridge…", error = null))
         try {
             leScanner.startScan(
                 null,
@@ -121,7 +125,7 @@ class LdsBridgeLink(
         }
         main.postDelayed({
             stopScan()
-            if (!state.connected) publish(state.copy(status = if (found.isEmpty()) "Bridge nenalezen" else "Vyber nalezený Bridge", scanning = false))
+            if (!state.connected) publish(state.copy(status = if (found.isEmpty()) "Bridge nenalezen" else "Vyber nalezený Bridge", scanning = false, devices = synchronized(this@LdsBridgeLink) { found.values.sortedByDescending { it.rssi } }))
         }, 12000L)
     }
 
