@@ -40,6 +40,10 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.UUID
+import cz.robotcockpit.app.lidar.LdsBridgeDevice
+import cz.robotcockpit.app.lidar.LdsBridgeLink
+import cz.robotcockpit.app.lidar.LdsBridgeState
+import cz.robotcockpit.app.lidar.MarosLdsScan
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
 
@@ -195,6 +199,8 @@ fun RobotCockpitApp() {
     var t by remember { mutableStateOf(RobotTelemetry()) }
     var page by remember { mutableIntStateOf(0) }
     var paired by remember { mutableStateOf<List<BluetoothDevice>>(emptyList()) }
+    var ldsState by remember { mutableStateOf(LdsBridgeState()) }
+    var ldsDevices by remember { mutableStateOf<List<LdsBridgeDevice>>(emptyList()) }
     var selectedAddress by remember { mutableStateOf("") }
     var maxPower by remember { mutableFloatStateOf(0.35f) }
     var armed by remember { mutableStateOf(false) }
@@ -211,6 +217,37 @@ fun RobotCockpitApp() {
             }
         }
     }
+    val ldsLink = remember {
+        LdsBridgeLink(context) { next ->
+            ldsState = next
+            ldsDevices = ldsLinkDevicesSnapshot(next, ldsDevices)
+        }
+    }
+    val ldsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result.values.all { it }) {
+            ldsLink.startScan()
+        } else {
+            ldsState = ldsState.copy(scanning = false, error = "Povol aplikaci Bluetooth scan/connect pro nalezení LDS Bridge.")
+        }
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) ldsLink.startScan()
+        else ldsState = ldsState.copy(scanning = false, error = "Pro BLE skenování na Androidu 11 a starším je nutné oprávnění polohy.")
+    }
+    fun scanLdsBridge() {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            val required = listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+                .filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
+            if (required.isEmpty()) ldsLink.startScan() else ldsPermissionLauncher.launch(required.toTypedArray())
+        } else {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                ldsLink.startScan()
+            } else {
+                locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             paired = try { adapter?.bondedDevices?.toList()?.sortedBy { it.name ?: it.address } ?: emptyList() } catch (_: SecurityException) { emptyList() }
@@ -234,7 +271,7 @@ fun RobotCockpitApp() {
 
     DisposableEffect(Unit) {
         refreshDevices()
-        onDispose { link.disconnect("Aplikace ukončena") }
+        onDispose { link.disconnect("Aplikace ukončena"); ldsLink.close() }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Green, background = Bg, surface = Panel, onPrimary = Bg, onBackground = Ink, onSurface = Ink, error = Red)) {
@@ -272,7 +309,7 @@ fun RobotCockpitApp() {
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("ROBOT COCKPIT", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                                Text("ESP32 · BLUETOOTH CLASSIC SPP", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
+                                Text("ROBOT SPP · XIAOMI LDS BLE", color = Muted, fontSize = 9.sp, letterSpacing = .6.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -300,10 +337,28 @@ fun RobotCockpitApp() {
                                 if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
-                            else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
-                                val device = paired.firstOrNull { it.address == selectedAddress }
-                                if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
-                            })
+                            else -> ConnectionPage(
+                                t, paired, selectedAddress,
+                                onSelect = { selectedAddress = it },
+                                onRefresh = { refreshDevices() },
+                                onConnect = {
+                                    val device = paired.firstOrNull { it.address == selectedAddress }
+                                    if (device != null) link.connect(device) else t = t.copy(error = "Vyber spárovaný Robot007 (SPP).")
+                                },
+                                ldsState = ldsState,
+                                ldsDevices = ldsDevices,
+                                onScanLds = { scanLdsBridge() },
+                                onConnectLds = { address ->
+                                    if (android.os.Build.VERSION.SDK_INT < 31 ||
+                                        (ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                                         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED)) {
+                                        ldsLink.connect(address)
+                                    } else {
+                                        ldsPermissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT))
+                                    }
+                                },
+                                onDisconnectLds = { ldsLink.disconnect() }
+                            )
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
@@ -637,9 +692,59 @@ private fun TelemetryPage(t: RobotTelemetry) {
 }
 
 @Composable
-private fun ConnectionPage(t: RobotTelemetry, devices: List<BluetoothDevice>, selected: String, onSelect: (String) -> Unit, onRefresh: () -> Unit, onConnect: () -> Unit) {
+private fun ConnectionPage(
+    t: RobotTelemetry,
+    devices: List<BluetoothDevice>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onConnect: () -> Unit,
+    ldsState: LdsBridgeState,
+    ldsDevices: List<LdsBridgeDevice>,
+    onScanLds: () -> Unit,
+    onConnectLds: (String) -> Unit,
+    onDisconnectLds: () -> Unit
+) {
     Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ScreenTitle("LINK CONFIGURATION", "Bluetooth SPP", "Nejdřív spáruj ESP32 v nastavení Bluetooth telefonu")
+        ScreenTitle("LINK CONFIGURATION", "Bluetooth", "Robot = Classic SPP · Xiaomi LDS Bridge = BLE GATT")
+        CardPanel {
+            Text("XIAOMI LDS BRIDGE · BLE GATT", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text(ldsState.status, color = if (ldsState.notificationsEnabled) Green else Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            if (ldsState.deviceName.isNotBlank()) DataRow("Bridge", ldsState.deviceName)
+            if (ldsState.address.isNotBlank()) DataRow("BLE adresa", ldsState.address)
+            DataRow("GATT spojení", if (ldsState.connected) "CONNECTED" else "OFFLINE", if (ldsState.connected) Green else Amber)
+            DataRow("Notifikace", if (ldsState.notificationsEnabled) "AKTIVNÍ" else "ČEKÁ", if (ldsState.notificationsEnabled) Green else Muted)
+            DataRow("Přijaté fragmenty", ldsState.packets.toString())
+            DataRow("Kompletní 360° skeny", ldsState.scans.toString())
+            DataRow("Rychlost LDS", if (ldsState.rpm > 0) "${ldsState.rpm} RPM" else "—")
+            DataRow("Platné body", if (ldsState.lastScan != null) "${ldsState.validPoints}/360" else "—")
+            DataRow("Nejbližší bod", ldsState.nearestMeters?.let { "%.2f m".format(it) } ?: "—")
+            if (ldsState.error != null) Text(ldsState.error, color = Red, fontSize = 10.sp)
+            if (ldsState.lastScan != null) LdsRadar(ldsState.lastScan.rangesMeters, Modifier.fillMaxWidth().height(210.dp))
+            if (ldsDevices.isNotEmpty()) {
+                Text("NALEZENÉ BRIDGE", color = Muted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                ldsDevices.forEach { device ->
+                    Row(Modifier.fillMaxWidth().background(Panel2, RoundedCornerShape(8.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(device.name, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("${device.address} · RSSI ${device.rssi} dBm", color = Muted, fontSize = 9.sp)
+                        }
+                        Button(onClick = { onConnectLds(device.address) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)) {
+                            Text(if (ldsState.address == device.address && ldsState.connected) "ZNOVU" else "PŘIPOJIT", fontSize = 9.sp)
+                        }
+                    }
+                }
+            } else {
+                Text("Bridge se vyhledává přímo přes BLE. Není nutné párování v nastavení Androidu.", color = Muted, fontSize = 10.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onScanLds, modifier = Modifier.weight(1f), enabled = !ldsState.scanning) {
+                    Text(if (ldsState.scanning) "HLEDÁM…" else "VYHLEDAT LDS")
+                }
+                Button(onClick = onDisconnectLds, modifier = Modifier.weight(1f), enabled = ldsState.connected) { Text("ODPOJIT") }
+            }
+            Text("UUID služby: a71d0001… · NOTIFY: a71d0002… · MAROS D3 / 23 × 20 B", color = Muted, fontSize = 8.sp)
+        }
         CardPanel {
             Text("SPÁROVANÁ ZAŘÍZENÍ", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             if (devices.isEmpty()) {
@@ -665,13 +770,35 @@ private fun ConnectionPage(t: RobotTelemetry, devices: List<BluetoothDevice>, se
             if (t.connected) Button(onClick = { /* disconnect is handled by top bar */ }, modifier = Modifier.fillMaxWidth(), enabled = false) { Text("SPP SPOJENÍ AKTIVNÍ") }
         }
         CardPanel {
-            Text("PROTOKOL", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("ROBOT – PROTOKOL", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             DataRow("Transport", "Bluetooth Classic SPP")
             DataRow("Formát", "JSON, jeden paket na řádek")
             DataRow("Rychlost", "SPP stream")
             DataRow("Firmware", t.firmware)
-            Text("Aplikace nevyhledává cizí zařízení automaticky; pracuje se spárovanými zařízeními.", color = Muted, fontSize = 10.sp)
+            Text("Robot007 se připojuje přes spárované SPP zařízení. Xiaomi LDS Bridge používá samostatné BLE GATT připojení výše a nevyžaduje systémové párování.", color = Muted, fontSize = 10.sp)
         }
+    }
+}
+
+@Composable
+private fun LdsRadar(ranges: FloatArray, modifier: Modifier = Modifier) {
+    Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).padding(8.dp)) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension * 0.44f
+        for (fraction in listOf(0.25f, 0.5f, 0.75f, 1f)) {
+            drawCircle(Border, radius * fraction, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        }
+        drawLine(Border, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
+        drawLine(Border, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 1.dp.toPx())
+        for (i in 0 until minOf(360, ranges.size)) {
+            val distance = ranges[i]
+            if (!distance.isFinite() || distance <= 0f) continue
+            val r = (distance / 12f).coerceIn(0f, 1f) * radius
+            val angle = Math.toRadians(i.toDouble() - 90.0)
+            val point = Offset(center.x + kotlin.math.cos(angle).toFloat() * r, center.y + kotlin.math.sin(angle).toFloat() * r)
+            drawCircle(Cyan.copy(alpha = 0.9f), 2.2.dp.toPx(), point)
+        }
+        drawCircle(Green, 4.dp.toPx(), center)
     }
 }
 
