@@ -841,7 +841,7 @@ private fun SlamPage(state: LdsBridgeState) {
 private fun SlamLocalMap(ranges: FloatArray, modifier: Modifier = Modifier) {
     Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).padding(8.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
-        val radius = size.minDimension * .44f
+        val radius = minOf(size.width, size.height) * .44f
         val scale = radius / 5f
         for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
         drawLine(Border, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
