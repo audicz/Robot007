@@ -42,7 +42,8 @@ class MarosD3ScanAssembler {
             rejectedPackets++
             return null
         }
-        val sequence = packet[1].toInt() and 0xFF
+        // V24.7.2 packs motor duty in the high nibble and scan sequence in the low nibble.
+        val sequence = packet[1].toInt() and 0x0F
         val fragment = packet[2].toInt() and 0xFF
         if (fragment !in 0 until FRAGMENT_COUNT) {
             rejectedPackets++
