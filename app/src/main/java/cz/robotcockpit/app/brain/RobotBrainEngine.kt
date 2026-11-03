@@ -12,7 +12,8 @@ import kotlin.math.roundToInt
  * First integration layer between the existing RobotCockpit core data model
  * and the phone-side mapping/planning modules.
  *
- * This is odometry + occupancy mapping, not scan-matching SLAM yet.
+ * This is wheel/gyro odometry + local scan-to-map correction + occupancy mapping.
+ * It is not full graph SLAM and does not perform loop closure.
  */
 data class DriveCalibration(
     val wheelDiameterMeters: Double,
