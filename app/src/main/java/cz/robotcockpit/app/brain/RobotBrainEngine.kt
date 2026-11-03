@@ -82,14 +82,26 @@ class RobotBrainEngine(
 
     @Synchronized fun onLidarScan(scan: CoreLidarScan): BrainSnapshot {
         val pose = odometry.pose
+        // The map renderer uses 360 one-degree bins. Resample the source scan
+        // using its declared angular metadata rather than assuming its point count.
+        val bins = FloatArray(360) { Float.NaN }
+        var valid = 0
+        for (i in scan.rangesMeters.indices) {
+            val range = scan.rangesMeters[i]
+            if (!range.isFinite() || range < scan.rangeMin || range > scan.rangeMax) continue
+            val angle = scan.angleMin + i * scan.angleIncrement
+            val bin = (((Math.toDegrees(angle) % 360.0) + 360.0) % 360.0).roundToInt() % 360
+            bins[bin] = range
+            valid++
+        }
         val converted = LidarScan(
             sequence = (scan.timestampNanos and 0x7fffffffL).toInt(),
             rpm = 0,
-            rangesMeters = scan.rangesMeters.copyOf(),
+            rangesMeters = bins,
             receivedAtMs = scan.timestampNanos / 1_000_000L
         )
         map.integrate(converted, RobotPose(pose.x.toFloat(), pose.y.toFloat(), pose.yaw.toFloat()), scan.rangeMax.toFloat())
-        return BrainSnapshot(pose, map, scan.timestampNanos, scan.rangesMeters.count { it.isFinite() })
+        return BrainSnapshot(pose, map, scan.timestampNanos, valid)
     }
 
     fun worldToCell(pose: Pose2D): GridCell = GridCell(
