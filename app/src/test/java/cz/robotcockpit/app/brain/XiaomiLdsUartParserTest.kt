@@ -50,4 +50,27 @@ class XiaomiLdsUartParserTest {
         assertEquals(1L, parser.invalidPacketCount)
         assertTrue(parser.feed(frame(1)).isEmpty())
     }
+
+    @Test fun occupancyMapCodecRoundTripsAndDetectsCorruption() {
+        val map = RobotMap(width = 20, height = 16, resolution = 0.1f)
+        map.integrate(
+            LidarScan(0.0, Math.PI / 180.0, 0.08, 12.0,
+                FloatArray(360) { if (it == 0) 1.0f else Float.NaN }),
+            RobotPose()
+        )
+        val encoded = RobotMapCodec.encode(map)
+        val restored = RobotMapCodec.decode(encoded)
+        assertEquals(map.width, restored.width)
+        assertEquals(map.height, restored.height)
+        assertEquals(map.resolution, restored.resolution, 0.0001f)
+        assertArrayEquals(map.toByteArray(), restored.toByteArray())
+
+        encoded[encoded.lastIndex] = (encoded.last().toInt() xor 1).toByte()
+        try {
+            RobotMapCodec.decode(encoded)
+            fail("Corrupt map should be rejected")
+        } catch (_: java.io.IOException) {
+            // Expected: checksum mismatch.
+        }
+    }
 }
