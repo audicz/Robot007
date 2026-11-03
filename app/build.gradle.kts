@@ -12,8 +12,8 @@ android {
         applicationId = "cz.robotcockpit.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6-lds-ble"
+        versionCode = 7
+        versionName = "0.7-lidar-slam-planner"
     }
 
     buildFeatures { compose = true }
