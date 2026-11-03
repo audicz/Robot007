@@ -870,7 +870,7 @@ private fun RoutePlannerPage(state: LdsBridgeState, points: List<Offset>, onPoin
             }
             RoutePlanningCanvas(state.lastScan?.rangesMeters, points, Modifier.fillMaxWidth().aspectRatio(1f), onPointsChange)
             DataRow("Průjezdní body", points.size.toString())
-            DataRow("Délka návrhu", if (points.isEmpty()) "—" else "%.1f m".format(points.fold(0.0) { sum, p -> sum + kotlin.math.hypot(p.x.toDouble(), p.y.toDouble()) }))
+            DataRow("Délka návrhu", if (points.isEmpty()) "—" else "%.1f m".format(points.foldIndexed(0.0) { index, sum, p -> sum + if (index == 0) kotlin.math.hypot(p.x.toDouble(), p.y.toDouble()) else kotlin.math.hypot((p.x - points[index - 1].x).toDouble(), (p.y - points[index - 1].y).toDouble()) }))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onPointsChange(emptyList()) }, modifier = Modifier.weight(1f)) { Text("VYMAZAT") }
                 Button(onClick = { if (points.isNotEmpty()) onPointsChange(points.dropLast(1)) }, modifier = Modifier.weight(1f), enabled = points.isNotEmpty()) { Text("ZPĚT") }
@@ -906,8 +906,7 @@ private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modif
         for ((index, point) in points.withIndex()) {
             val current = Offset(center.x + point.x * scale, center.y - point.y * scale)
             drawLine(Green, previous, current, 3.dp.toPx())
-            drawCircle(Red, 6.dp.toPx(), current)
-            drawContext.canvas.nativeCanvas.drawText((index + 1).toString(), current.x + 8.dp.toPx(), current.y - 8.dp.toPx(), android.graphics.Paint().apply { color = android.graphics.Color.WHITE; textSize = 11.sp.toPx(); isFakeBoldText = true })
+            drawCircle(Red, (6f + index.coerceAtMost(4)).dp.toPx(), current)
             previous = current
         }
         drawCircle(Cyan, 5.dp.toPx(), center)
