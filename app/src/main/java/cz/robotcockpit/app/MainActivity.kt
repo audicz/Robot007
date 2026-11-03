@@ -220,7 +220,7 @@ fun RobotCockpitApp() {
     val ldsLink = remember {
         LdsBridgeLink(context) { next ->
             ldsState = next
-            ldsDevices = ldsLinkDevicesSnapshot(next, ldsDevices)
+            ldsDevices = next.devices
         }
     }
     val ldsPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
