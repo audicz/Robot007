@@ -1,5 +1,6 @@
 package cz.robotcockpit.app.brain
 
+import cz.robotcockpit.app.core.LidarScan
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -63,7 +64,7 @@ class XiaomiLdsUartParserTest {
         assertEquals(map.width, restored.width)
         assertEquals(map.height, restored.height)
         assertEquals(map.resolution, restored.resolution, 0.0001f)
-        assertArrayEquals(map.toByteArray(), restored.toByteArray())
+        assertTrue(map.toByteArray().contentEquals(restored.toByteArray()))
 
         encoded[encoded.lastIndex] = (encoded.last().toInt() xor 1).toByte()
         try {
