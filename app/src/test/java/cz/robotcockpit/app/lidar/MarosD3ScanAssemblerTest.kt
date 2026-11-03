@@ -1,7 +1,6 @@
 package cz.robotcockpit.app.lidar
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -30,9 +29,8 @@ class MarosD3ScanAssemblerTest {
                 ?: completed
         }
 
-        val scan = completed
-        assertNotNull(scan)
-        assertEquals(7, scan!!.sequence)
+        val scan = completed ?: throw AssertionError("Expected a complete 360-degree scan")
+        assertEquals(7, scan.sequence)
         assertEquals(300, scan.rpm)
         assertEquals(360, scan.rangesMeters.size)
         assertEquals(360, scan.validPoints)
