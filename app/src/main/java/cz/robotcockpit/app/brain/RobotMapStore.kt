@@ -6,6 +6,9 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.CRC32
 
 /**
@@ -72,8 +75,12 @@ class RobotMapStore(private val file: File) {
         val temp = File(file.parentFile ?: File("."), file.name + ".tmp")
         try {
             temp.writeBytes(RobotMapCodec.encode(map))
-            if (file.exists() && !file.delete()) throw IOException("Nelze nahradit starou mapu")
-            if (!temp.renameTo(file)) throw IOException("Nelze uložit mapu")
+            try {
+                Files.move(temp.toPath(), file.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
         } finally {
             if (temp.exists()) temp.delete()
         }
