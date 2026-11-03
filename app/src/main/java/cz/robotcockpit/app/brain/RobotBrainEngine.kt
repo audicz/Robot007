@@ -103,11 +103,13 @@ class RobotBrainEngine(
             bins[bin] = range
             valid++
         }
-        val converted = LidarScan(
-            sequence = (scan.timestampNanos and 0x7fffffffL).toInt(),
-            rpm = 0,
+        val converted = CoreLidarScan(
+            angleMin = 0.0,
+            angleIncrement = 2.0 * PI / 360.0,
+            rangeMin = scan.rangeMin,
+            rangeMax = scan.rangeMax,
             rangesMeters = bins,
-            receivedAtMs = scan.timestampNanos / 1_000_000L
+            timestampNanos = scan.timestampNanos
         )
         val match = scanMatcher.match(
             bins,
