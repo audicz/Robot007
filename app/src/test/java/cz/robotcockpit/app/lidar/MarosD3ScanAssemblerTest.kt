@@ -12,7 +12,8 @@ class MarosD3ScanAssemblerTest {
             packet[1] = (((dutyNibble and 0x0F) shl 4) or (sequence and 0x0F)).toByte()
             packet[2] = index.toByte()
             packet[3] = 150.toByte() // 300 RPM, encoded as RPM / 2
-            for (i in 0 until if (index == 22) 8 else 16) {
+            val sampleCount = if (index == 22) 8 else 16
+            for (i in 0 until sampleCount) {
                 packet[4 + i] = range.toByte()
             }
         }
@@ -29,12 +30,13 @@ class MarosD3ScanAssemblerTest {
                 ?: completed
         }
 
-        assertNotNull(completed)
-        assertEquals(7, completed!!.sequence)
-        assertEquals(300, completed.rpm)
-        assertEquals(360, completed.rangesMeters.size)
-        assertEquals(360, completed.validPoints)
-        assertEquals(1.0f, completed.nearestMeters!!, 0.0001f)
+        val scan = completed
+        assertNotNull(scan)
+        assertEquals(7, scan!!.sequence)
+        assertEquals(300, scan.rpm)
+        assertEquals(360, scan.rangesMeters.size)
+        assertEquals(360, scan.validPoints)
+        assertEquals(1.0f, scan.nearestMeters!!, 0.0001f)
     }
 
     @Test
