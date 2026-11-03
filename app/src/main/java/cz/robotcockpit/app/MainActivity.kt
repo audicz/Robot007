@@ -17,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -205,6 +206,7 @@ fun RobotCockpitApp() {
     var maxPower by remember { mutableFloatStateOf(0.35f) }
     var armed by remember { mutableStateOf(false) }
     var command by remember { mutableStateOf("STOP") }
+    var plannerPoints by remember { mutableStateOf(listOf<Offset>()) }
     val adapter = remember { BluetoothAdapter.getDefaultAdapter() }
     val link = remember {
         BluetoothLink { state ->
@@ -337,7 +339,7 @@ fun RobotCockpitApp() {
                                 if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
-                            else -> ConnectionPage(
+                            3 -> ConnectionPage(
                                 t, paired, selectedAddress,
                                 onSelect = { selectedAddress = it },
                                 onRefresh = { refreshDevices() },
@@ -359,11 +361,14 @@ fun RobotCockpitApp() {
                                 },
                                 onDisconnectLds = { ldsLink.disconnect() }
                             )
+                            4 -> LidarPage(ldsState)
+                            5 -> SlamPage(ldsState)
+                            6 -> RoutePlannerPage(ldsState, plannerPoints, onPointsChange = { plannerPoints = it })
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
-                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH").forEachIndexed { i, label ->
-                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH", "LIDAR", "SLAM", "TRASY").forEachIndexed { i, label ->
+                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ", "◉", "▦", "➤")[i], fontSize = 18.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 7.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
                         }
                     }
                 }
@@ -777,6 +782,136 @@ private fun ConnectionPage(
             DataRow("Firmware", t.firmware)
             Text("Robot007 se připojuje přes spárované SPP zařízení. Xiaomi LDS Bridge používá samostatné BLE GATT připojení výše a nevyžaduje systémové párování.", color = Muted, fontSize = 10.sp)
         }
+    }
+}
+
+
+@Composable
+private fun LidarPage(state: LdsBridgeState) {
+    LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item { ScreenTitle("SENSOR 01", "LIDAR 360°", "Živý výstup Xiaomi LDS · MAROS D3 BLE") }
+        item {
+            CardPanel {
+                Text(if (state.notificationsEnabled) "BLE STREAM AKTIVNÍ" else state.status.uppercase(), color = if (state.notificationsEnabled) Green else Amber, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                DataRow("Přijaté fragmenty", state.packets.toString())
+                DataRow("Kompletní skeny", state.scans.toString())
+                DataRow("Otáčky", if (state.rpm > 0) state.rpm.toString() + " RPM" else "—")
+                DataRow("Platné body", state.validPoints.toString() + "/360")
+                DataRow("Nejbližší překážka", state.nearestMeters?.let { "%.2f m".format(it) } ?: "—")
+                if (state.lastScan != null) LdsRadar(state.lastScan.rangesMeters, Modifier.fillMaxWidth().aspectRatio(1f))
+                else Text("Zatím nepřišel kompletní sken. Ověř, že Bridge posílá BLE NOTIFY a motor LDS se otáčí.", color = Muted, fontSize = 12.sp)
+                if (state.error != null) Text(state.error, color = Red, fontSize = 10.sp)
+            }
+        }
+        item {
+            CardPanel {
+                Text("PROTOKOL", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                DataRow("Transport", "BLE GATT · MAROS D3")
+                DataRow("Rozlišení", "360 směrů · 1°")
+                DataRow("Krok vzdálenosti", "5 cm")
+                DataRow("Bridge", state.deviceName.ifBlank { "nepřipojen" })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SlamPage(state: LdsBridgeState) {
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ScreenTitle("MAPPING 02", "SLAM / MAPA OKOLÍ", "2D projekce posledního 360° skenu")
+        CardPanel {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Metric("BODY", state.validPoints.toString(), "platné odrazy", Cyan, Modifier.weight(1f))
+                Metric("RPM", if (state.rpm > 0) state.rpm.toString() else "—", "otáčky LDS", Green, Modifier.weight(1f))
+                Metric("SKENY", state.scans.toString(), "kompletní", Amber, Modifier.weight(1f))
+            }
+        }
+        CardPanel {
+            Text("LOKÁLNÍ MAPA", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            if (state.lastScan != null) SlamLocalMap(state.lastScan.rangesMeters, Modifier.fillMaxWidth().aspectRatio(1f))
+            else Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
+                Text("Čekám na první kompletní sken LDS…", color = Muted)
+            }
+            Text("Poznámka: toto je zatím lokální mapa z aktuálního skenu, nikoli plnohodnotný SLAM. Pro skládání mapy při jízdě musíme doplnit odometrii enkodérů a orientaci z IMU; samotný lidar nezná posun robota mezi skeny.", color = Amber, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+private fun SlamLocalMap(ranges: FloatArray, modifier: Modifier = Modifier) {
+    Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).padding(8.dp)) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension * .44f
+        val scale = radius / 5f
+        for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        drawLine(Border, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
+        drawLine(Border, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 1.dp.toPx())
+        for (i in 0 until minOf(360, ranges.size)) {
+            val d = ranges[i]
+            if (!d.isFinite() || d <= 0f || d > 5f) continue
+            val angle = Math.toRadians(i.toDouble())
+            val point = Offset(center.x + kotlin.math.sin(angle).toFloat() * d * scale, center.y - kotlin.math.cos(angle).toFloat() * d * scale)
+            drawCircle(Cyan, 2.5.dp.toPx(), point)
+        }
+        drawCircle(Green, 5.dp.toPx(), center)
+        drawLine(Green, center, Offset(center.x, center.y - 14.dp.toPx()), 3.dp.toPx())
+    }
+}
+
+@Composable
+private fun RoutePlannerPage(state: LdsBridgeState, points: List<Offset>, onPointsChange: (List<Offset>) -> Unit) {
+    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ScreenTitle("NAVIGATION 03", "PLÁNOVÁNÍ TRASY", "Klepnutím do mapy přidáš průjezdní body")
+        CardPanel {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(if (state.lastScan != null) "DATA LDS AKTIVNÍ" else "ČEKÁM NA DATA LDS", color = if (state.lastScan != null) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text(state.validPoints.toString() + "/360 bodů", color = Muted, fontSize = 9.sp)
+            }
+            RoutePlanningCanvas(state.lastScan?.rangesMeters, points, Modifier.fillMaxWidth().aspectRatio(1f), onPointsChange)
+            DataRow("Průjezdní body", points.size.toString())
+            DataRow("Délka návrhu", if (points.isEmpty()) "—" else "%.1f m".format(points.fold(0.0) { sum, p -> sum + kotlin.math.hypot(p.x.toDouble(), p.y.toDouble()) }))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onPointsChange(emptyList()) }, modifier = Modifier.weight(1f)) { Text("VYMAZAT") }
+                Button(onClick = { if (points.isNotEmpty()) onPointsChange(points.dropLast(1)) }, modifier = Modifier.weight(1f), enabled = points.isNotEmpty()) { Text("ZPĚT") }
+            }
+            Text("Body a spojnice jsou zatím návrh trasy v lokálních souřadnicích. Odeslání a autonomní jízdu doplníme po propojení SLAM s enkodéry/IMU a navigačním protokolem ESP32.", color = Amber, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
+private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modifier: Modifier = Modifier, onPointsChange: (List<Offset>) -> Unit) {
+    Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).pointerInput(points, ranges) {
+        detectTapGestures { tap ->
+            val scale = size.minDimension * .44f / 5f
+            val center = Offset(size.width / 2f, size.height / 2f)
+            val x = ((tap.x - center.x) / scale).coerceIn(-4.8f, 4.8f)
+            val y = ((center.y - tap.y) / scale).coerceIn(-4.8f, 4.8f)
+            onPointsChange(points + Offset(x, y))
+        }
+    }.padding(8.dp)) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val radius = size.minDimension * .44f
+        val scale = radius / 5f
+        for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        if (ranges != null) for (i in 0 until minOf(360, ranges.size)) {
+            val d = ranges[i]
+            if (!d.isFinite() || d <= 0f || d > 5f) continue
+            val angle = Math.toRadians(i.toDouble())
+            val p = Offset(center.x + kotlin.math.sin(angle).toFloat() * d * scale, center.y - kotlin.math.cos(angle).toFloat() * d * scale)
+            drawCircle(Amber, 2.2.dp.toPx(), p)
+        }
+        var previous = center
+        for ((index, point) in points.withIndex()) {
+            val current = Offset(center.x + point.x * scale, center.y - point.y * scale)
+            drawLine(Green, previous, current, 3.dp.toPx())
+            drawCircle(Red, 6.dp.toPx(), current)
+            drawContext.canvas.nativeCanvas.drawText((index + 1).toString(), current.x + 8.dp.toPx(), current.y - 8.dp.toPx(), android.graphics.Paint().apply { color = android.graphics.Color.WHITE; textSize = 11.sp.toPx(); isFakeBoldText = true })
+            previous = current
+        }
+        drawCircle(Cyan, 5.dp.toPx(), center)
+        drawLine(Cyan, center, Offset(center.x, center.y - 14.dp.toPx()), 3.dp.toPx())
     }
 }
 
