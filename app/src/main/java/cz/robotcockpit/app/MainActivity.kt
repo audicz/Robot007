@@ -652,7 +652,7 @@ private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float
     }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().padding(12.dp)) {
             val c = Offset(size.width / 2f, size.height / 2f)
-            val r = size.minDimension * .46f
+            val r = minOf(size.width, size.height) * .46f
             drawCircle(color = Border, radius = r, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
             drawCircle(color = Border.copy(alpha = .6f), radius = r * .62f, center = c, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
             drawLine(color = Border, start = Offset(c.x, c.y-r), end = Offset(c.x, c.y+r), strokeWidth = 1.dp.toPx())
@@ -884,7 +884,7 @@ private fun RoutePlannerPage(state: LdsBridgeState, points: List<Offset>, onPoin
 private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modifier: Modifier = Modifier, onPointsChange: (List<Offset>) -> Unit) {
     Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).pointerInput(points, ranges) {
         detectTapGestures { tap ->
-            val scale = size.minDimension * .44f / 5f
+            val scale = minOf(size.width, size.height) * .44f / 5f
             val center = Offset(size.width / 2f, size.height / 2f)
             val x = ((tap.x - center.x) / scale).coerceIn(-4.8f, 4.8f)
             val y = ((center.y - tap.y) / scale).coerceIn(-4.8f, 4.8f)
@@ -892,7 +892,7 @@ private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modif
         }
     }.padding(8.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
-        val radius = size.minDimension * .44f
+        val radius = minOf(size.width, size.height) * .44f
         val scale = radius / 5f
         for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
         if (ranges != null) for (i in 0 until minOf(360, ranges.size)) {
@@ -918,7 +918,7 @@ private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modif
 private fun LdsRadar(ranges: FloatArray, modifier: Modifier = Modifier) {
     Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).padding(8.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
-        val radius = size.minDimension * 0.44f
+        val radius = minOf(size.width, size.height) * 0.44f
         for (fraction in listOf(0.25f, 0.5f, 0.75f, 1f)) {
             drawCircle(Border, radius * fraction, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
         }
