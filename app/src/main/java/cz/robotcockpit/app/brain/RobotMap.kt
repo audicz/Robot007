@@ -52,4 +52,9 @@ class RobotMap(val width: Int = 200, val height: Int = 200, val resolution: Floa
     }
 
     fun toByteArray() = cells.copyOf()
+
+    @Synchronized fun loadFromByteArray(data: ByteArray) {
+        require(data.size == cells.size) { "Map data size does not match grid dimensions" }
+        data.copyInto(cells)
+    }
 }
