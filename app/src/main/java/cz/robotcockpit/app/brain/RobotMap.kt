@@ -1,5 +1,6 @@
 package cz.robotcockpit.app.brain
 
+import cz.robotcockpit.app.core.LidarScan
 import kotlin.math.*
 
 data class RobotPose(val x: Float = 0f, val y: Float = 0f, val yaw: Float = 0f)
