@@ -318,6 +318,7 @@ fun RobotCockpitApp() {
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
                             4 -> LidarScreen(telemetry = t, onBack = { page = 0 })
+                            5 -> LidarScreen(telemetry = t, onBack = { page = 0 }, initialMapMode = true, initialPlannerMode = true)
                             else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
                                 val device = paired.firstOrNull { it.address == selectedAddress }
                                 if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
@@ -325,8 +326,8 @@ fun RobotCockpitApp() {
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
-                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH", "LIDAR").forEachIndexed { i, label ->
-                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ", "◉")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH", "LIDAR", "SLAM/NAV").forEachIndexed { i, label ->
+                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ", "◉", "⌁")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
                         }
                     }
                 }
