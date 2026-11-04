@@ -317,8 +317,12 @@ fun RobotCockpitApp() {
                                 if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
-                            4 -> LidarScreen(telemetry = t, onBack = { page = 0 })
-                            5 -> LidarScreen(telemetry = t, onBack = { page = 0 }, initialMapMode = true, initialPlannerMode = true)
+                            4, 5 -> LidarScreen(
+                                telemetry = t,
+                                onBack = { page = 0 },
+                                initialMapMode = page == 5,
+                                initialPlannerMode = page == 5
+                            )
                             else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
                                 val device = paired.firstOrNull { it.address == selectedAddress }
                                 if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
