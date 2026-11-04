@@ -183,7 +183,13 @@ private fun LidarOccupancyView(
             grid.robotCell(RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg))
         else null
     }
-    Canvas(modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(4.dp)) {
+    // Keep map cells square on both portrait and landscape screens.
+    BoxWithConstraints(
+        modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val mapSize = minOf(maxWidth, maxHeight)
+        Canvas(Modifier.size(mapSize)) {
         val cellW = size.width / grid.width
         val cellH = size.height / grid.height
         for (y in 0 until grid.height) {
@@ -205,6 +211,7 @@ private fun LidarOccupancyView(
             val yaw = Math.toRadians(telemetry.poseYawDeg ?: 0.0)
             val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
             drawLine(Color.White, p, end, 2.dp.toPx())
+        }
         }
     }
 }
