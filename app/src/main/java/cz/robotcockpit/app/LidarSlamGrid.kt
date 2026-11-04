@@ -1,5 +1,6 @@
 package cz.robotcockpit.app
 
+import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
