@@ -56,7 +56,11 @@ fun LidarScreen(
     telemetry: RobotTelemetry = RobotTelemetry(),
     onBack: () -> Unit,
     initialMapMode: Boolean = false,
-    initialPlannerMode: Boolean = false
+    initialPlannerMode: Boolean = false,
+    onArm: () -> Unit = {},
+    onStop: () -> Unit = {},
+    onDrive: (Float, Float) -> Unit = { _, _ -> },
+    onRelease: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
@@ -316,8 +320,27 @@ fun LidarScreen(
                         OutlinedButton(onClick = { routeRequest++ }, modifier = Modifier.weight(1f), enabled = goalCell != null) { Text("PŘEPOČÍTAT") }
                         OutlinedButton(onClick = { goalCell = null; plannedRoute = null }, modifier = Modifier.weight(1f)) { Text("ZRUŠIT CÍL") }
                     }
-                    Text("Náhled A* trasy je lokální plán. Robot se sám nerozjede; firmware zatím nemá potvrzené enkodéry ani příkazy pro autonomní jízdu.",
+                    Text("Náhled A* trasy je lokální plán. Automatická jízda zůstává vypnutá, ale ruční řízení je dostupné níže.",
                         color = CockpitPalette.Muted, fontSize = 9.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onArm,
+                            enabled = telemetry.connected && !telemetry.armed,
+                            modifier = Modifier.weight(1f)
+                        ) { Text("POVOLIT POHON") }
+                        Button(
+                            onClick = onStop,
+                            enabled = telemetry.connected,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = CockpitPalette.Red, contentColor = Color.White)
+                        ) { Text("STOP") }
+                    }
+                    Joystick(
+                        Modifier.fillMaxWidth().height(132.dp),
+                        enabled = telemetry.connected && telemetry.armed,
+                        onMove = onDrive,
+                        onRelease = onRelease
+                    )
                 } else {
                     LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
                     val update = slamUpdate
