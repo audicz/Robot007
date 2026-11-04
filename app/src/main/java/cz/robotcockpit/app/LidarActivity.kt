@@ -200,31 +200,31 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     DisposableEffect(Unit) {
         onDispose { client.close() }
     }
-    MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF45D9E8), background = Color(0xFF080D13), surface = Color(0xFF111B26))) {
-        Column(Modifier.fillMaxSize().background(Color(0xFF080D13)).padding(14.dp)) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = CockpitPalette.Cyan, background = CockpitPalette.Background, surface = CockpitPalette.Panel)) {
+        Column(Modifier.fillMaxSize().background(CockpitPalette.Background).padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("‹", color = Color(0xFF45D9E8), fontSize = 32.sp, modifier = Modifier.padding(end = 10.dp))
+                Text("‹", color = CockpitPalette.Cyan, fontSize = 32.sp, modifier = Modifier.padding(end = 10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("ROBOT COCKPIT · LDS", color = Color.White, fontSize = 17.sp)
-                    Text("Xiaomi LDS BLE · 360° scan", color = Color(0xFF8EA3B7), fontSize = 10.sp)
+                    Text("ROBOT COCKPIT · LDS", color = CockpitPalette.Text, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = .7.sp)
+                    Text("XIAOMI LDS BLE  ·  360° SCAN", color = CockpitPalette.Muted, fontSize = 9.sp, letterSpacing = .8.sp)
                 }
                 TextButton(onClick = onBack) { Text("ZPĚT") }
             }
             Spacer(Modifier.height(8.dp))
-            Text(status, color = if (connected) Color(0xFF62E5A0) else Color(0xFFFFC66D), fontSize = 11.sp)
+            Text(status, color = if (connected) CockpitPalette.Green else CockpitPalette.Amber, fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { ensurePermissionsAndScan() }, modifier = Modifier.weight(1f)) { Text(if (scanning) "OBNOVIT SCAN" else "VYHLEDAT LDS") }
                 OutlinedButton(onClick = { client.disconnect(); connected = false; status = "LDS odpojeno"; frame = null }) { Text("ODPOJIT") }
             }
             if (!connected) {
-                Text("BLE zařízení", color = Color(0xFF45D9E8), fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                Text("BLE zařízení", color = CockpitPalette.Cyan, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                 LazyColumn(Modifier.heightIn(max = 150.dp)) {
                     items(devices, key = { it.address }) { item ->
-                        Row(Modifier.fillMaxWidth().background(Color(0xFF111B26), RoundedCornerShape(9.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().background(CockpitPalette.Panel, RoundedCornerShape(9.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(item.name, color = Color.White, fontSize = 12.sp)
-                                Text(item.address, color = Color(0xFF8EA3B7), fontSize = 9.sp)
+                                Text(item.address, color = CockpitPalette.Muted, fontSize = 9.sp)
                             }
                             TextButton(onClick = {
                                 selectedAddress = item.address
@@ -237,8 +237,8 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(if (mapMode) "2D OCCUPANCY MAP" else "LIVE POLAR SCAN", color = Color(0xFF45D9E8), fontSize = 11.sp)
-                Text(frame?.let { "${it.rpm} RPM · ${it.rangesCm.count { d -> d > 0 }} bodů" } ?: "ČEKÁM NA DATA", color = Color(0xFF8EA3B7), fontSize = 10.sp)
+                Text(if (mapMode) "2D OCCUPANCY MAP" else "LIVE POLAR SCAN", color = CockpitPalette.Cyan, fontSize = 11.sp)
+                Text(frame?.let { "${it.rpm} RPM · ${it.rangesCm.count { d -> d > 0 }} bodů" } ?: "ČEKÁM NA DATA", color = CockpitPalette.Muted, fontSize = 10.sp)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { mapMode = false }, modifier = Modifier.weight(1f)) { Text("ŽIVÝ SKEN") }
@@ -257,7 +257,7 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                     OutlinedButton(onClick = { exportImageLauncher.launch("robot007-map.svg") }, modifier = Modifier.weight(1f), enabled = slamReady && occupancyGrid.integratedScans() > 0, contentPadding = PaddingValues(4.dp)) { Text("EXPORT SVG", fontSize = 10.sp) }
                     OutlinedButton(onClick = { openMapLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) { Text("NAČÍST", fontSize = 10.sp) }
                 }
-                Text(mapFileStatus, color = Color(0xFF8EA3B7), fontSize = 9.sp)
+                Text(mapFileStatus, color = CockpitPalette.Muted, fontSize = 9.sp)
                 LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
                 val update = slamUpdate
                 Text(
@@ -267,14 +267,14 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                         update.loopClosure -> "LOOP CLOSURE · ${update.loopClosures} oprav · ${update.keyframes} keyframů · score ${"%.2f".format(update.score)}"
                         else -> "LiDAR SLAM · ${update.scans} skenů · ${update.keyframes} keyframů · loop closures ${update.loopClosures} · score ${"%.2f".format(update.score)}"
                     },
-                    color = if (update?.tracking == true) Color(0xFF62E5A0) else Color(0xFFFFC66D),
+                    color = if (update?.tracking == true) CockpitPalette.Green else CockpitPalette.Amber,
                     fontSize = 10.sp
                 )
                 Text("LiDAR-only scan matching + ICP loop closure + pose graph · automatické ukládání mapy · 30 × 30 m / 5 cm",
-                    color = Color(0xFF8EA3B7), fontSize = 9.sp)
+                    color = CockpitPalette.Muted, fontSize = 9.sp)
             } else {
                 LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
-                Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = Color(0xFF8EA3B7), fontSize = 9.sp)
+                Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = CockpitPalette.Muted, fontSize = 9.sp)
             }
         }
     }
@@ -282,15 +282,15 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
 
 @Composable
 private fun LidarPolarView(frame: LidarFrame?, modifier: Modifier = Modifier) {
-    Canvas(modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(8.dp)) {
+    Canvas(modifier.background(CockpitPalette.MapBackground, RoundedCornerShape(14.dp)).padding(8.dp)) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = size.minDimension * .47f
         for (ring in 1..4) {
-            drawCircle(Color(0xFF2A3C4E), radius * ring / 4f, center, style = Stroke(1.dp.toPx()))
+            drawCircle(CockpitPalette.Border, radius * ring / 4f, center, style = Stroke(1.dp.toPx()))
         }
-        drawLine(Color(0xFF2A3C4E), Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
-        drawLine(Color(0xFF2A3C4E), Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 1.dp.toPx())
-        drawCircle(Color(0xFF45D9E8), 5.dp.toPx(), center)
+        drawLine(CockpitPalette.Border, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
+        drawLine(CockpitPalette.Border, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 1.dp.toPx())
+        drawCircle(CockpitPalette.Cyan, 5.dp.toPx(), center)
         val ranges = frame?.rangesCm ?: return@Canvas
         val maxRangeCm = 1275f
         ranges.forEachIndexed { index, distance ->
@@ -298,7 +298,7 @@ private fun LidarPolarView(frame: LidarFrame?, modifier: Modifier = Modifier) {
                 val r = (distance / maxRangeCm).coerceIn(0f, 1f) * radius
                 val angle = Math.toRadians(index.toDouble() - 90.0)
                 val p = Offset(center.x + cos(angle).toFloat() * r, center.y + sin(angle).toFloat() * r)
-                drawCircle(Color(0xFF62E5A0), 2.dp.toPx(), p)
+                drawCircle(CockpitPalette.Green, 2.dp.toPx(), p)
             }
         }
     }
@@ -321,7 +321,7 @@ private fun LidarOccupancyView(
     }
     // Keep map cells square on both portrait and landscape screens.
     BoxWithConstraints(
-        modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(4.dp),
+        modifier.background(CockpitPalette.MapBackground, RoundedCornerShape(14.dp)).padding(4.dp),
         contentAlignment = Alignment.Center
     ) {
         val mapSize = minOf(maxWidth, maxHeight)
@@ -333,7 +333,7 @@ private fun LidarOccupancyView(
                 val value = cells[y * grid.width + x].toInt()
                 if (value > 1) {
                     drawRect(
-                        color = Color(0xFF62E5A0).copy(alpha = (value / 40f).coerceIn(.25f, 1f)),
+                        color = CockpitPalette.Green.copy(alpha = (value / 40f).coerceIn(.25f, 1f)),
                         topLeft = Offset(x * cellW, y * cellH),
                         size = androidx.compose.ui.geometry.Size(cellW + .25f, cellH + .25f)
                     )
@@ -344,7 +344,7 @@ private fun LidarOccupancyView(
             val a = trajectory[i - 1]
             val b = trajectory[i]
             drawLine(
-                Color(0xFFFFC66D).copy(alpha = 0.9f),
+                CockpitPalette.Amber.copy(alpha = 0.9f),
                 Offset(a.first * cellW, a.second * cellH),
                 Offset(b.first * cellW, b.second * cellH),
                 strokeWidth = 2.dp.toPx()
@@ -353,7 +353,7 @@ private fun LidarOccupancyView(
         val robot = robotCell
         if (robot != null) {
             val p = Offset(robot.first * cellW, robot.second * cellH)
-            drawCircle(Color(0xFF45D9E8), 5.dp.toPx(), p)
+            drawCircle(CockpitPalette.Cyan, 5.dp.toPx(), p)
             val yaw = Math.toRadians(displayPose?.yawDeg ?: 0.0)
             val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
             drawLine(Color.White, p, end, 2.dp.toPx())
