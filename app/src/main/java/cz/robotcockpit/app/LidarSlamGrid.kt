@@ -1,15 +1,16 @@
 package cz.robotcockpit.app
 
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * Odometry-based 2D occupancy mapper.
+ * 2D occupancy mapper with local correlative scan matching.
  *
- * This is deliberately not called a complete SLAM implementation: it places scans
- * using the robot pose supplied by the SPP telemetry. Scan matching / loop closure
- * can be added later without changing the SPP v1 wire protocol.
+ * Odometry supplies the initial pose. Each new scan searches a bounded
+ * X/Y/yaw window against previously occupied cells, then integrates at the
+ * best pose. This is local scan matching, not global loop closure.
  */
 data class RobotPose2D(val xCm: Double, val yCm: Double, val yawDeg: Double)
 
@@ -22,6 +23,8 @@ class LidarSlamGrid(
     private var originXcm: Double? = null
     private var originYcm: Double? = null
     private var scansIntegrated = 0
+    private var lastMatchScore = 0f
+    private var lastMatchCorrected = false
 
     @Synchronized
     fun clear() {
@@ -29,11 +32,92 @@ class LidarSlamGrid(
         originXcm = null
         originYcm = null
         scansIntegrated = 0
+        lastMatchScore = 0f
+        lastMatchCorrected = false
+    }
+
+    /**
+     * Aligns a new scan to the existing occupancy map around the odometry pose.
+     * Search window: +/-15 cm in X/Y and +/-8 degrees in heading.
+     * The first scan initializes the map from odometry.
+     */
+    @Synchronized
+    fun matchAndIntegrate(frame: LidarFrame, odometryPose: RobotPose2D): RobotPose2D? {
+        if (!validGeometry()) return null
+        if (scansIntegrated == 0) {
+            val ok = integrateAt(frame, odometryPose)
+            lastMatchScore = 0f
+            lastMatchCorrected = false
+            return if (ok) odometryPose else null
+        }
+
+        val baseScore = score(frame, odometryPose)
+        var bestPose = odometryPose
+        var bestScore = baseScore
+        val xyStep = cellSizeCm.toDouble()
+        val angleStep = 2.0
+
+        for (dy in -3..3) {
+            for (dx in -3..3) {
+                for (da in -4..4) {
+                    if (dx == 0 && dy == 0 && da == 0) continue
+                    val candidate = RobotPose2D(
+                        odometryPose.xCm + dx * xyStep,
+                        odometryPose.yCm + dy * xyStep,
+                        normalizeAngle(odometryPose.yawDeg + da * angleStep)
+                    )
+                    val candidateScore = score(frame, candidate)
+                    if (candidateScore > bestScore) {
+                        bestScore = candidateScore
+                        bestPose = candidate
+                    }
+                }
+            }
+        }
+
+        // Reject weak matches rather than pulling the map toward unrelated geometry.
+        val accepted = bestScore >= 0.10f && bestScore >= baseScore + 0.015f
+        val finalPose = if (accepted) bestPose else odometryPose
+        lastMatchScore = bestScore
+        lastMatchCorrected = accepted
+        return if (integrateAt(frame, finalPose)) finalPose else null
     }
 
     @Synchronized
-    fun integrate(frame: LidarFrame, pose: RobotPose2D): Boolean {
-        if (width < 16 || height < 16 || cellSizeCm <= 0f) return false
+    fun integrate(frame: LidarFrame, pose: RobotPose2D): Boolean = integrateAt(frame, pose)
+
+    private fun validGeometry() = width >= 16 && height >= 16 && cellSizeCm > 0f
+
+    private fun score(frame: LidarFrame, pose: RobotPose2D): Float {
+        val ox = originXcm ?: return 0f
+        val oy = originYcm ?: return 0f
+        var sum = 0f
+        var samples = 0
+        val yaw = Math.toRadians(pose.yawDeg)
+        // 3-degree sampling balances matching quality and mobile CPU cost.
+        for (angleDeg in 0 until 360 step 3) {
+            val range = frame.rangesCm.getOrNull(angleDeg) ?: 0
+            if (range !in 10..1275) continue
+            val angle = yaw + Math.toRadians(angleDeg.toDouble())
+            val wx = pose.xCm + sin(angle) * range
+            val wy = pose.yCm + cos(angle) * range
+            val gx = (width / 2.0 + (wx - ox) / cellSizeCm).roundToInt()
+            val gy = (height / 2.0 - (wy - oy) / cellSizeCm).roundToInt()
+            if (gx !in 1 until width - 1 || gy !in 1 until height - 1) continue
+
+            var localBest = 0
+            for (ny in -1..1) for (nx in -1..1) {
+                localBest = maxOf(localBest, cells[(gy + ny) * width + gx + nx].toInt())
+            }
+            // Only occupied cells are useful scan-match targets.
+            sum += localBest.coerceAtLeast(0) / 40f
+            samples++
+        }
+        return if (samples >= 20) sum / samples else 0f
+    }
+
+    private fun integrateAt(frame: LidarFrame, pose: RobotPose2D): Boolean {
+        if (!validGeometry()) return false
         if (originXcm == null) {
             originXcm = pose.xCm
             originYcm = pose.yCm
@@ -68,9 +152,9 @@ class LidarSlamGrid(
     private fun traceRay(x0: Int, y0: Int, x1: Int, y1: Int) {
         var x = x0
         var y = y0
-        val dx = kotlin.math.abs(x1 - x0)
+        val dx = abs(x1 - x0)
         val sx = if (x0 < x1) 1 else -1
-        val dy = -kotlin.math.abs(y1 - y0)
+        val dy = -abs(y1 - y0)
         val sy = if (y0 < y1) 1 else -1
         var error = dx + dy
         while (true) {
@@ -99,4 +183,14 @@ class LidarSlamGrid(
 
     @Synchronized
     fun integratedScans(): Int = scansIntegrated
+
+    @Synchronized
+    fun matchStatus(): Pair<Boolean, Float> = lastMatchCorrected to lastMatchScore
+
+    private fun normalizeAngle(degrees: Double): Double {
+        var value = degrees % 360.0
+        if (value > 180.0) value -= 360.0
+        if (value < -180.0) value += 360.0
+        return value
+    }
 }
