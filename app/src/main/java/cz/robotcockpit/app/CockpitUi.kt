@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Modifier
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,7 +43,7 @@ internal fun CockpitScreenHeader(kicker: String, title: String, subtitle: String
 @Composable
 internal fun CockpitPanel(content: @Composable ColumnScope.() -> Unit) {
     Card(
-        modifier = Modifier,
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = CockpitPalette.Panel),
         border = BorderStroke(1.dp, CockpitPalette.Border),
         shape = RoundedCornerShape(14.dp)
