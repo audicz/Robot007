@@ -80,11 +80,16 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
         }
     }
 
-    // Debounced autosave; the binary file contains the occupancy map and SLAM graph.
-    LaunchedEffect(mapRevision, slamReady) {
-        if (slamReady && occupancyGrid.integratedScans() > 0) {
-            delay(1400)
-            withContext(Dispatchers.IO) { occupancyGrid.saveTo(mapFile) }
+    // Periodic autosave is independent of scan frequency, so continuous frames
+    // cannot keep cancelling the save operation.
+    LaunchedEffect(slamReady) {
+        if (slamReady) {
+            while (true) {
+                delay(5000)
+                if (occupancyGrid.integratedScans() > 0) {
+                    withContext(Dispatchers.IO) { occupancyGrid.saveTo(mapFile) }
+                }
+            }
         }
     }
     val client = remember {
