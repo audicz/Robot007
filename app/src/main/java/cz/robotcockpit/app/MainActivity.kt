@@ -358,7 +358,19 @@ private fun MapDashboard(
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.cacheMode = WebSettings.LOAD_DEFAULT
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            val savedPosition = view?.tag as? String ?: return
+                            val parts = savedPosition.split(",", limit = 2)
+                            if (parts.size == 2) {
+                                view.evaluateJavascript(
+                                    "window.robotMap&&window.robotMap.setRobotPosition(${parts[0]},${parts[1]});",
+                                    null
+                                )
+                            }
+                        }
+                    }
                     setBackgroundColor(android.graphics.Color.rgb(16, 24, 32))
                     loadDataWithBaseURL(
                         "https://www.openstreetmap.org/",
@@ -388,8 +400,8 @@ private fun MapDashboard(
                 val lon = t.longitude
                 if (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0) {
                     val positionKey = "$lat,$lon"
-                    if (view.getTag(android.R.id.content) != positionKey) {
-                        view.setTag(android.R.id.content, positionKey)
+                    if (view.tag != positionKey) {
+                        view.tag = positionKey
                         view.evaluateJavascript("window.robotMap&&window.robotMap.setRobotPosition($lat,$lon);", null)
                     }
                 }
