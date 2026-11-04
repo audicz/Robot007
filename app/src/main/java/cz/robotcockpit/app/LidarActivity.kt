@@ -12,6 +12,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -50,7 +52,12 @@ class LidarActivity : ComponentActivity() {
 
 @SuppressLint("MissingPermission")
 @Composable
-fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit) {
+fun LidarScreen(
+    telemetry: RobotTelemetry = RobotTelemetry(),
+    onBack: () -> Unit,
+    initialMapMode: Boolean = false,
+    initialPlannerMode: Boolean = false
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
     var frame by remember { mutableStateOf<LidarFrame?>(null) }
@@ -58,7 +65,11 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     var connected by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var selectedAddress by remember { mutableStateOf("") }
-    var mapMode by remember { mutableStateOf(false) }
+    var mapMode by remember { mutableStateOf(initialMapMode || initialPlannerMode) }
+    var plannerMode by remember { mutableStateOf(initialPlannerMode) }
+    var goalCell by remember { mutableStateOf<GridCell?>(null) }
+    var plannedRoute by remember { mutableStateOf<PlannedRoute?>(null) }
+    var routeStatus by remember { mutableStateOf("Vyber cíl v již zmapované volné oblasti") }
     var mapRevision by remember { mutableIntStateOf(0) }
     var mappedPose by remember { mutableStateOf<RobotPose2D?>(null) }
     var slamUpdate by remember { mutableStateOf<SlamUpdate?>(null) }
@@ -167,6 +178,25 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
         }
     }
 
+    LaunchedEffect(mapRevision, goalCell, slamReady, plannerMode) {
+        val goal = goalCell
+        if (plannerMode && goal != null && slamReady) {
+            routeStatus = "POČÍTÁM TRASU…"
+            val result = withContext(Dispatchers.Default) {
+                LidarRoutePlanner().plan(occupancyGrid, occupancyGrid.currentPose(), goal)
+            }
+            plannedRoute = result
+            routeStatus = if (result == null) {
+                "TRASA NENALEZENA · cíl musí ležet v prozkoumané volné oblasti"
+            } else {
+                "TRASA OK · ${result.cells.size} bodů · ${"%.0f".format(result.lengthCm)} cm · ${result.expandedNodes} uzlů"
+            }
+        } else if (goal == null) {
+            plannedRoute = null
+            if (plannerMode) routeStatus = "Vyber cíl v již zmapované volné oblasti"
+        }
+    }
+
     // Periodic autosave is independent of scan frequency, so continuous frames
     // cannot keep cancelling the save operation.
     LaunchedEffect(slamReady) {
@@ -242,19 +272,23 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             }
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(if (mapMode) "2D OCCUPANCY MAP" else "LIVE POLAR SCAN", color = CockpitPalette.Cyan, fontSize = 11.sp)
+                Text(if (plannerMode) "ROUTE PLANNER" else if (mapMode) "SLAM OCCUPANCY MAP" else "LIVE POLAR SCAN", color = CockpitPalette.Cyan, fontSize = 11.sp)
                 Text(frame?.let { "${it.rpm} RPM · ${it.rangesCm.count { d -> d > 0 }} bodů" } ?: "ČEKÁM NA DATA", color = CockpitPalette.Muted, fontSize = 10.sp)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { mapMode = false }, modifier = Modifier.weight(1f)) { Text("ŽIVÝ SKEN") }
-                Button(onClick = { mapMode = true }, modifier = Modifier.weight(1f)) { Text("2D MAPA") }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                OutlinedButton(onClick = { mapMode = false; plannerMode = false }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text("LIDAR", fontSize = 9.sp) }
+                Button(onClick = { mapMode = true; plannerMode = false }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text("SLAM", fontSize = 9.sp) }
+                Button(onClick = { mapMode = true; plannerMode = true }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 3.dp)) { Text("TRASY", fontSize = 9.sp) }
                 OutlinedButton(onClick = {
                     occupancyGrid.clear()
                     mappedPose = null
                     slamUpdate = null
+                    goalCell = null
+                    plannedRoute = null
+                    routeStatus = "Mapa byla vymazána"
                     mapRevision++
                     mapFile.delete()
-                }) { Text("VYMAZAT") }
+                }, contentPadding = PaddingValues(horizontal = 5.dp)) { Text("RESET", fontSize = 9.sp) }
             }
             if (mapMode) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -263,20 +297,39 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                     OutlinedButton(onClick = { openMapLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) { Text("NAČÍST", fontSize = 10.sp) }
                 }
                 Text(mapFileStatus, color = CockpitPalette.Muted, fontSize = 9.sp)
-                LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
-                val update = slamUpdate
-                Text(
-                    when {
-                        update == null -> "ČEKÁM NA KOMPLETNÍ 360° SKEN"
-                        !update.tracking -> "TRACKING ZTRACEN · mapa se nezapisuje (score ${"%.2f".format(update.score)})"
-                        update.loopClosure -> "LOOP CLOSURE · ${update.loopClosures} oprav · ${update.keyframes} keyframů · score ${"%.2f".format(update.score)}"
-                        else -> "LiDAR SLAM · ${update.scans} skenů · ${update.keyframes} keyframů · loop closures ${update.loopClosures} · score ${"%.2f".format(update.score)}"
-                    },
-                    color = if (update?.tracking == true) CockpitPalette.Green else CockpitPalette.Amber,
-                    fontSize = 10.sp
-                )
-                Text("LiDAR-only scan matching + ICP loop closure + pose graph · automatické ukládání mapy · 30 × 30 m / 5 cm",
-                    color = CockpitPalette.Muted, fontSize = 9.sp)
+                if (plannerMode) {
+                    Text("Klepnutím do mapy zvol cíl. Neznámé buňky jsou z bezpečnostních důvodů neprůjezdné.",
+                        color = CockpitPalette.Muted, fontSize = 10.sp)
+                    LidarOccupancyView(
+                        occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f),
+                        routeCells = plannedRoute?.cells ?: emptyList(),
+                        goalCell = goalCell,
+                        onMapTap = { cell -> goalCell = cell; plannedRoute = null; routeStatus = "PŘEPOČÍTÁVÁM…" }
+                    )
+                    Text(routeStatus, color = if (plannedRoute != null) CockpitPalette.Green else CockpitPalette.Amber, fontSize = 10.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { goalCell = null; plannedRoute = null }, modifier = Modifier.weight(1f)) { Text("ZRUŠIT CÍL") }
+                        Button(onClick = { routeStatus = "NÁHLED TRASY JE PŘIPRAVEN · autonomní povely zatím nejsou implementovány ve firmware" },
+                            modifier = Modifier.weight(1f), enabled = plannedRoute != null) { Text("PŘIPRAVIT JÍZDU") }
+                    }
+                    Text("Náhled A* trasy je lokální plán. Robot se sám nerozjede; firmware zatím nemá potvrzené enkodéry ani příkazy pro autonomní jízdu.",
+                        color = CockpitPalette.Muted, fontSize = 9.sp)
+                } else {
+                    LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
+                    val update = slamUpdate
+                    Text(
+                        when {
+                            update == null -> "ČEKÁM NA KOMPLETNÍ 360° SKEN"
+                            !update.tracking -> "TRACKING ZTRACEN · mapa se nezapisuje (score ${"%.2f".format(update.score)})"
+                            update.loopClosure -> "LOOP CLOSURE · ${update.loopClosures} oprav · ${update.keyframes} keyframů · score ${"%.2f".format(update.score)}"
+                            else -> "LiDAR SLAM · ${update.scans} skenů · ${update.keyframes} keyframů · loop closures ${update.loopClosures} · score ${"%.2f".format(update.score)}"
+                        },
+                        color = if (update?.tracking == true) CockpitPalette.Green else CockpitPalette.Amber,
+                        fontSize = 10.sp
+                    )
+                    Text("LiDAR-only scan matching + ICP loop closure + pose graph · automatické ukládání mapy · 30 × 30 m / 5 cm",
+                        color = CockpitPalette.Muted, fontSize = 9.sp)
+                }
             } else {
                 LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
                 Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = CockpitPalette.Muted, fontSize = 9.sp)
@@ -314,7 +367,10 @@ private fun LidarOccupancyView(
     grid: LidarSlamGrid,
     revision: Int,
     mappedPose: RobotPose2D?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    routeCells: List<GridCell> = emptyList(),
+    goalCell: GridCell? = null,
+    onMapTap: ((GridCell) -> Unit)? = null
 ) {
     // Rasterize the 600x600 occupancy grid off the UI thread. Drawing one
     // texture is substantially cheaper than issuing hundreds of thousands
@@ -346,7 +402,15 @@ private fun LidarOccupancyView(
         contentAlignment = Alignment.Center
     ) {
         val mapSize = minOf(maxWidth, maxHeight)
-        Canvas(Modifier.size(mapSize)) {
+        Canvas(Modifier.size(mapSize).pointerInput(grid, onMapTap) {
+            detectTapGestures { tap ->
+                if (onMapTap != null && size.width > 0 && size.height > 0) {
+                    val x = (tap.x / size.width * grid.width).toInt().coerceIn(0, grid.width - 1)
+                    val y = (tap.y / size.height * grid.height).toInt().coerceIn(0, grid.height - 1)
+                    onMapTap(GridCell(x, y))
+                }
+            }
+        }) {
             val image = mapBitmap
             if (image != null) {
                 drawImage(image, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
@@ -362,6 +426,19 @@ private fun LidarOccupancyView(
                     Offset(b.first * cellW, b.second * cellH),
                     strokeWidth = 2.dp.toPx()
                 )
+            }
+            for (i in 1 until routeCells.size) {
+                val a = routeCells[i - 1]
+                val b = routeCells[i]
+                drawLine(
+                    Color(0xFF45D9E8),
+                    Offset((a.x + .5f) * cellW, (a.y + .5f) * cellH),
+                    Offset((b.x + .5f) * cellW, (b.y + .5f) * cellH),
+                    strokeWidth = 4.dp.toPx()
+                )
+            }
+            goalCell?.let { goal ->
+                drawCircle(Color(0xFFFFC66D), 7.dp.toPx(), Offset((goal.x + .5f) * cellW, (goal.y + .5f) * cellH), style = Stroke(2.dp.toPx()))
             }
             val robot = robotCell
             if (robot != null) {
