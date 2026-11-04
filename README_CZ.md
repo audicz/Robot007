@@ -46,3 +46,8 @@ Mapa má 600 × 600 buněk, 5 cm/buňku (30 × 30 m). Žlutá čára zobrazuje t
 - STOP v Androidu není bezpečnostní hardwarový vypínač.
 - Před prvním testem zvedni hnací kola a ověř watchdog i fyzické odpojení napájení.
 - BLE LiDAR je samostatná linka a nemění bezpečnostní stav SPP řízení.
+
+
+### Export a import mapy
+
+Na obrazovce 2D MAPA jsou akce **ULOŽIT SOUBOR** a **NAČÍST SOUBOR**. Uložení otevře systémový výběr umístění Androidu a vytvoří soubor `robot007-map.r7slam`. Soubor obsahuje occupancy grid 600 × 600 / 5 cm, aktuální pózu, trajektorii, keyframy, skeny keyframů a vazby pose graphu. Lze jej později načíst zpět přes **NAČÍST SOUBOR**. Formát je verzovaný a aplikace ověřuje jeho hlavičku, rozměry a strukturu před obnovením. Automatické interní ukládání po pěti sekundách zůstává aktivní nezávisle na exportu.
