@@ -534,7 +534,7 @@ class LidarSlamGrid(val width: Int = 600, val height: Int = 600, val cellSizeCm:
                 val loadedCells = ByteArray(cellCount)
                 input.readFully(loadedCells)
                 val keyframeCount = input.readInt()
-                require(keyframeCount in 0..250)
+                require(keyframeCount in 0..2000)
                 val loadedKeyframes = ArrayList<Keyframe>(keyframeCount)
                 repeat(keyframeCount) {
                     val pose = readPose(input)
@@ -545,7 +545,7 @@ class LidarSlamGrid(val width: Int = 600, val height: Int = 600, val cellSizeCm:
                     loadedKeyframes.add(Keyframe(pose, points))
                 }
                 val edgeCount = input.readInt()
-                require(edgeCount in 0..10000)
+                require(edgeCount in 0..50000)
                 val loadedEdges = ArrayList<GraphEdge>(edgeCount)
                 repeat(edgeCount) {
                     val from = input.readInt(); val to = input.readInt()
