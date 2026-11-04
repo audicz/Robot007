@@ -20,7 +20,7 @@ Hlavní repozitář pro robotickou platformu ESP32 a Android aplikaci Robot Cock
 
 ## Aktuální stav LiDAR části
 
-Aktuálně je doplněno BLE vyhledávání, GATT připojení, odběr notifikací, skládání 23 fragmentů a živé vykreslení 360° skenu. Toto je základní živý scan viewer, nikoli hotový SLAM: stabilní mapa při pohybu robota vyžaduje odometrii (enkodéry), IMU a scan matching / korekci driftu. Tyto části se nesmějí zaměňovat s pouhým vykreslením LiDAR paprsků.
+Aktuálně je doplněno BLE vyhledávání, GATT připojení, odběr notifikací, skládání 23 fragmentů, živé vykreslení 360° skenu a 2D occupancy grid s rozlišením 5 cm. Mapa přijímá polohu z volitelných polí SPP telemetrie (`pose.xCm`, `pose.yCm`, `pose.yawDeg`, `pose.valid`; případně ploché aliasy). Pokud je starý firmware neposílá, aplikace mapu správně ponechá ve stavu „čeká na odometrii“ a nijak si polohu nevymýšlí. Jde o mapování podle odometrie, nikoli dokončený SLAM: další etapou je skutečný odhad pohybu z enkodérů + IMU, scan matching a korekce driftu / loop closure.
 
 ## Sestavení APK
 
