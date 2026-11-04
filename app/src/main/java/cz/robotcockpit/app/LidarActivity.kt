@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -40,7 +41,7 @@ class LidarActivity : ComponentActivity() {
 
 @SuppressLint("MissingPermission")
 @Composable
-fun LidarScreen(onBack: () -> Unit) {
+fun LidarScreen(telemetry: RobotTelemetry, onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
     var frame by remember { mutableStateOf<LidarFrame?>(null) }
@@ -48,6 +49,17 @@ fun LidarScreen(onBack: () -> Unit) {
     var connected by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var selectedAddress by remember { mutableStateOf("") }
+    var mapMode by remember { mutableStateOf(false) }
+    var mapRevision by remember { mutableIntStateOf(0) }
+    val occupancyGrid = remember { LidarSlamGrid() }
+    LaunchedEffect(frame?.receivedAtMs) {
+        val currentFrame = frame
+        if (currentFrame != null && telemetry.odometryValid &&
+            telemetry.poseXcm != null && telemetry.poseYcm != null && telemetry.poseYawDeg != null) {
+            val pose = RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg)
+            if (occupancyGrid.integrate(currentFrame, pose)) mapRevision++
+        }
+    }
     val client = remember {
         LidarBleClient(context, { devices = it }, { frame = it }, {
             status = it
@@ -110,13 +122,27 @@ fun LidarScreen(onBack: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("LIVE POLAR SCAN", color = Color(0xFF45D9E8), fontSize = 11.sp)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(if (mapMode) "2D OCCUPANCY MAP" else "LIVE POLAR SCAN", color = Color(0xFF45D9E8), fontSize = 11.sp)
                 Text(frame?.let { "${it.rpm} RPM · ${it.rangesCm.count { d -> d > 0 }} bodů" } ?: "ČEKÁM NA DATA", color = Color(0xFF8EA3B7), fontSize = 10.sp)
             }
-            LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
-            Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = Color(0xFF8EA3B7), fontSize = 9.sp)
-            Text("Toto je živý LiDAR scan. Pro skutečné SLAM mapování je nutné doplnit odhad pohybu robota (enkodéry/IMU) a scan matching.", color = Color(0xFFFFC66D), fontSize = 10.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { mapMode = false }, modifier = Modifier.weight(1f)) { Text("ŽIVÝ SKEN") }
+                Button(onClick = { mapMode = true }, modifier = Modifier.weight(1f)) { Text("2D MAPA") }
+                OutlinedButton(onClick = { occupancyGrid.clear(); mapRevision++ }) { Text("VYMAZAT") }
+            }
+            if (mapMode) {
+                LidarOccupancyView(occupancyGrid, mapRevision, telemetry, Modifier.fillMaxWidth().weight(1f))
+                Text(
+                    if (telemetry.odometryValid) "Odometrie aktivní · ${occupancyGrid.integratedScans()} skenů · mřížka 5 cm"
+                    else "MAPA ČEKÁ NA ODOMETRII: SPP telemetrie zatím neposílá xCm, yCm, yawDeg + odomValid=true.",
+                    color = if (telemetry.odometryValid) Color(0xFF62E5A0) else Color(0xFFFFC66D),
+                    fontSize = 10.sp
+                )
+            } else {
+                LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
+                Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = Color(0xFF8EA3B7), fontSize = 9.sp)
+            }
         }
     }
 }
@@ -141,6 +167,45 @@ private fun LidarPolarView(frame: LidarFrame?, modifier: Modifier = Modifier) {
                 val p = Offset(center.x + cos(angle).toFloat() * r, center.y + sin(angle).toFloat() * r)
                 drawCircle(Color(0xFF62E5A0), 2.dp.toPx(), p)
             }
+        }
+    }
+}
+
+@Composable
+private fun LidarOccupancyView(
+    grid: LidarSlamGrid,
+    revision: Int,
+    telemetry: RobotTelemetry,
+    modifier: Modifier = Modifier
+) {
+    val cells = remember(revision) { grid.snapshot() }
+    val robotCell = remember(revision, telemetry.poseXcm, telemetry.poseYcm) {
+        if (telemetry.odometryValid && telemetry.poseXcm != null && telemetry.poseYcm != null && telemetry.poseYawDeg != null)
+            grid.robotCell(RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg))
+        else null
+    }
+    Canvas(modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(4.dp)) {
+        val cellW = size.width / grid.width
+        val cellH = size.height / grid.height
+        for (y in 0 until grid.height) {
+            for (x in 0 until grid.width) {
+                val value = cells[y * grid.width + x].toInt()
+                if (value > 1) {
+                    drawRect(
+                        color = Color(0xFF62E5A0).copy(alpha = (value / 40f).coerceIn(.25f, 1f)),
+                        topLeft = Offset(x * cellW, y * cellH),
+                        size = androidx.compose.ui.geometry.Size(cellW + .25f, cellH + .25f)
+                    )
+                }
+            }
+        }
+        val robot = robotCell
+        if (robot != null) {
+            val p = Offset(robot.first * cellW, robot.second * cellH)
+            drawCircle(Color(0xFF45D9E8), 5.dp.toPx(), p)
+            val yaw = Math.toRadians(telemetry.poseYawDeg ?: 0.0)
+            val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
+            drawLine(Color.White, p, end, 2.dp.toPx())
         }
     }
 }
