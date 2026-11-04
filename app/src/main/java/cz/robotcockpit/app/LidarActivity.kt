@@ -90,9 +90,14 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                 val loaded = withContext(Dispatchers.IO) {
                     val imported = File(context.cacheDir, "robot007-import.r7slam")
                     val copied = try {
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            imported.outputStream().use { output -> input.copyTo(output) }
-                        } ?: false
+                        val inputStream = context.contentResolver.openInputStream(uri)
+                        if (inputStream == null) false
+                        else {
+                            inputStream.use { input ->
+                                imported.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            true
+                        }
                     } catch (_: Exception) { false }
                     if (!copied) false
                     else {
