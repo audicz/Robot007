@@ -45,6 +45,8 @@ import cz.robotcockpit.app.lidar.LdsBridgeDevice
 import cz.robotcockpit.app.lidar.LdsBridgeLink
 import cz.robotcockpit.app.lidar.LdsBridgeState
 import cz.robotcockpit.app.lidar.MarosLdsScan
+import cz.robotcockpit.app.lidar.LidarSlamEngine
+import cz.robotcockpit.app.lidar.SlamSnapshot
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
 
@@ -207,6 +209,14 @@ fun RobotCockpitApp() {
     var armed by remember { mutableStateOf(false) }
     var command by remember { mutableStateOf("STOP") }
     var plannerPoints by remember { mutableStateOf(listOf<Offset>()) }
+    var plannerPath by remember { mutableStateOf(listOf<Offset>()) }
+    val slamEngine = remember { LidarSlamEngine() }
+    var slamMap by remember { mutableStateOf(slamEngine.snapshot()) }
+    var slamRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(ldsState.lastScan?.receivedAtNanos, slamRunning) {
+        val scan = ldsState.lastScan
+        if (slamRunning && scan != null) slamMap = slamEngine.process(scan.rangesMeters, scan.receivedAtNanos)
+    }
     val adapter = remember { BluetoothAdapter.getDefaultAdapter() }
     val link = remember {
         BluetoothLink { state ->
@@ -362,8 +372,30 @@ fun RobotCockpitApp() {
                                 onDisconnectLds = { ldsLink.disconnect() }
                             )
                             4 -> LidarPage(ldsState)
-                            5 -> SlamPage(ldsState)
-                            6 -> RoutePlannerPage(ldsState, plannerPoints, onPointsChange = { plannerPoints = it })
+                            5 -> SlamPage(
+                                ldsState, slamMap,
+                                onStart = { slamEngine.start(); slamRunning = true; slamMap = slamEngine.snapshot() },
+                                onPause = { slamEngine.pause(); slamRunning = false; slamMap = slamEngine.snapshot() },
+                                onReset = { slamEngine.reset(); slamMap = slamEngine.snapshot() }
+                            )
+                            6 -> RoutePlannerPage(
+                                ldsState, plannerPoints, plannerPath, slamMap,
+                                onPointsChange = { plannerPoints = it; plannerPath = emptyList() },
+                                onFindPath = {
+                                    plannerPath = if (plannerPoints.size == 2) slamEngine.planPath(plannerPoints[0], plannerPoints[1]) else emptyList()
+                                },
+                                connected = t.connected, armed = armed,
+                                onPulse = { throttle, steer ->
+                                    if (t.connected && armed) {
+                                        thread(name = "route-drive-pulse") {
+                                            link.sendDrive(throttle, steer, true)
+                                            Thread.sleep(350)
+                                            link.sendDrive(0f, 0f, true)
+                                        }
+                                    }
+                                },
+                                onStop = { link.arm(false); link.sendDrive(0f, 0f, false); armed = false; command = "STOP" }
+                            )
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
@@ -788,129 +820,214 @@ private fun ConnectionPage(
 
 @Composable
 private fun LidarPage(state: LdsBridgeState) {
-    LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 16.dp)) {
-        item { ScreenTitle("SENSOR 01", "LIDAR 360°", "Živý výstup Xiaomi LDS · MAROS D3 BLE") }
-        item {
-            CardPanel {
-                Text(if (state.notificationsEnabled) "BLE STREAM AKTIVNÍ" else state.status.uppercase(), color = if (state.notificationsEnabled) Green else Amber, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                DataRow("Přijaté fragmenty", state.packets.toString())
-                DataRow("Kompletní skeny", state.scans.toString())
-                DataRow("Otáčky", if (state.rpm > 0) state.rpm.toString() + " RPM" else "—")
-                DataRow("Platné body", state.validPoints.toString() + "/360")
-                DataRow("Nejbližší překážka", state.nearestMeters?.let { "%.2f m".format(it) } ?: "—")
-                if (state.lastScan != null) LdsRadar(state.lastScan.rangesMeters, Modifier.fillMaxWidth().aspectRatio(1f))
-                else Text("Zatím nepřišel kompletní sken. Ověř, že Bridge posílá BLE NOTIFY a motor LDS se otáčí.", color = Muted, fontSize = 12.sp)
-                if (state.error != null) Text(state.error, color = Red, fontSize = 10.sp)
+    Box(Modifier.fillMaxSize().background(Color(0xFF061018))) {
+        if (state.lastScan != null) LidarScanCanvas(state.lastScan.rangesMeters, Modifier.fillMaxSize())
+        Column(
+            Modifier.align(Alignment.TopStart).padding(12.dp).fillMaxWidth()
+                .background(Color(0xD9111B26), RoundedCornerShape(14.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("LIDAR 360°", color = Cyan, fontSize = 16.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Text(if (state.notificationsEnabled) "● LIVE" else "○ OFFLINE", color = if (state.notificationsEnabled) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
-        }
-        item {
-            CardPanel {
-                Text("PROTOKOL", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                DataRow("Transport", "BLE GATT · MAROS D3")
-                DataRow("Rozlišení", "360 směrů · 1°")
-                DataRow("Krok vzdálenosti", "5 cm")
-                DataRow("Bridge", state.deviceName.ifBlank { "nepřipojen" })
-            }
-        }
-    }
-}
-
-@Composable
-private fun SlamPage(state: LdsBridgeState) {
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        ScreenTitle("MAPPING 02", "SLAM / MAPA OKOLÍ", "2D projekce posledního 360° skenu")
-        CardPanel {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Metric("BODY", state.validPoints.toString(), "platné odrazy", Cyan, Modifier.weight(1f))
-                Metric("RPM", if (state.rpm > 0) state.rpm.toString() else "—", "otáčky LDS", Green, Modifier.weight(1f))
-                Metric("SKENY", state.scans.toString(), "kompletní", Amber, Modifier.weight(1f))
+                Metric("BODY", "${state.validPoints}/360", "platné odrazy", Cyan, Modifier.weight(1f))
+                Metric("RPM", if (state.rpm > 0) state.rpm.toString() else "—", "otáčky", Green, Modifier.weight(1f))
+                Metric("NEJBLIŽŠÍ", state.nearestMeters?.let { "%.2f m".format(it) } ?: "—", "překážka", Amber, Modifier.weight(1f))
             }
+            Text("Měřítko mapy se přizpůsobuje nejdelšímu platnému odrazu.  •  Skeny: ${state.scans}", color = Muted, fontSize = 10.sp)
+            if (state.error != null) Text(state.error, color = Red, fontSize = 10.sp)
         }
-        CardPanel {
-            Text("LOKÁLNÍ MAPA", color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            if (state.lastScan != null) SlamLocalMap(state.lastScan.rangesMeters, Modifier.fillMaxWidth().aspectRatio(1f))
-            else Box(Modifier.fillMaxWidth().aspectRatio(1f), contentAlignment = Alignment.Center) {
-                Text("Čekám na první kompletní sken LDS…", color = Muted)
-            }
-            Text("Poznámka: toto je zatím lokální mapa z aktuálního skenu, nikoli plnohodnotný SLAM. Pro skládání mapy při jízdě musíme doplnit odometrii enkodérů a orientaci z IMU; samotný lidar nezná posun robota mezi skeny.", color = Amber, fontSize = 10.sp)
+        if (state.lastScan == null) {
+            Text("ČEKÁM NA KOMPLETNÍ SKEN LDS", color = Amber, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.Center).background(Color(0xD9111B26), RoundedCornerShape(10.dp)).padding(14.dp))
         }
+        Text("XIAOMI LDS · MAROS D3 BLE", color = Muted, fontSize = 9.sp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp).background(Color(0xCC111B26), RoundedCornerShape(8.dp)).padding(8.dp))
     }
 }
 
 @Composable
-private fun SlamLocalMap(ranges: FloatArray, modifier: Modifier = Modifier) {
-    Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).padding(8.dp)) {
+private fun LidarScanCanvas(ranges: FloatArray, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
         val center = Offset(size.width / 2f, size.height / 2f)
         val radius = minOf(size.width, size.height) * .44f
-        val scale = radius / 5f
-        for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
-        drawLine(Border, Offset(center.x - radius, center.y), Offset(center.x + radius, center.y), 1.dp.toPx())
-        drawLine(Border, Offset(center.x, center.y - radius), Offset(center.x, center.y + radius), 1.dp.toPx())
+        val maxRange = (ranges.filter { it.isFinite() && it > 0f }.maxOrNull() ?: 3f).coerceIn(1.5f, 8f) * 1.08f
+        val scale = radius / maxRange
+        for (ring in 1..4) {
+            drawCircle(Border.copy(alpha = .8f), radius * ring / 4f, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
+        }
+        drawLine(Border, Offset(center.x-radius, center.y), Offset(center.x+radius, center.y), 1.dp.toPx())
+        drawLine(Border, Offset(center.x, center.y-radius), Offset(center.x, center.y+radius), 1.dp.toPx())
         for (i in 0 until minOf(360, ranges.size)) {
             val d = ranges[i]
-            if (!d.isFinite() || d <= 0f || d > 5f) continue
-            val angle = Math.toRadians(i.toDouble())
-            val point = Offset(center.x + kotlin.math.sin(angle).toFloat() * d * scale, center.y - kotlin.math.cos(angle).toFloat() * d * scale)
-            drawCircle(Cyan, 2.5.dp.toPx(), point)
+            if (!d.isFinite() || d <= 0f || d > maxRange) continue
+            val a = Math.toRadians(i.toDouble())
+            val p = Offset(center.x + kotlin.math.sin(a).toFloat()*d*scale, center.y - kotlin.math.cos(a).toFloat()*d*scale)
+            drawCircle(Cyan.copy(alpha = .92f), 2.3.dp.toPx(), p)
         }
         drawCircle(Green, 5.dp.toPx(), center)
-        drawLine(Green, center, Offset(center.x, center.y - 14.dp.toPx()), 3.dp.toPx())
+        drawLine(Green, center, Offset(center.x, center.y - 18.dp.toPx()), 3.dp.toPx())
     }
 }
 
 @Composable
-private fun RoutePlannerPage(state: LdsBridgeState, points: List<Offset>, onPointsChange: (List<Offset>) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ScreenTitle("NAVIGATION 03", "PLÁNOVÁNÍ TRASY", "Klepnutím do mapy přidáš průjezdní body")
-        CardPanel {
+private fun SlamPage(
+    state: LdsBridgeState,
+    map: SlamSnapshot,
+    onStart: () -> Unit,
+    onPause: () -> Unit,
+    onReset: () -> Unit
+) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF061018))) {
+        SlamMapCanvas(map, Modifier.fillMaxSize())
+        Column(
+            Modifier.align(Alignment.TopStart).fillMaxWidth().padding(10.dp)
+                .background(Color(0xD9111B26), RoundedCornerShape(14.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (state.lastScan != null) "DATA LDS AKTIVNÍ" else "ČEKÁM NA DATA LDS", color = if (state.lastScan != null) Green else Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Text(state.validPoints.toString() + "/360 bodů", color = Muted, fontSize = 9.sp)
+                Text("SLAM · 2D MAPA", color = Cyan, fontSize = 15.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Text(if (map.running) "● MAPUJI" else "Ⅱ POZASTAVENO", color = if (map.running) Green else Amber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
             }
-            RoutePlanningCanvas(state.lastScan?.rangesMeters, points, Modifier.fillMaxWidth().aspectRatio(1f), onPointsChange)
-            DataRow("Průjezdní body", points.size.toString())
-            DataRow("Délka návrhu", if (points.isEmpty()) "—" else "%.1f m".format(points.foldIndexed(0.0) { index, sum, p -> sum + if (index == 0) kotlin.math.hypot(p.x.toDouble(), p.y.toDouble()) else kotlin.math.hypot((p.x - points[index - 1].x).toDouble(), (p.y - points[index - 1].y).toDouble()) }))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onPointsChange(emptyList()) }, modifier = Modifier.weight(1f)) { Text("VYMAZAT") }
-                Button(onClick = { if (points.isNotEmpty()) onPointsChange(points.dropLast(1)) }, modifier = Modifier.weight(1f), enabled = points.isNotEmpty()) { Text("ZPĚT") }
+                Metric("SKENY", map.scansIntegrated.toString(), "integrováno", Cyan, Modifier.weight(1f))
+                Metric("POSE X/Y", "${"%.2f".format(map.x)}, ${"%.2f".format(map.y)}", "relativně m", Green, Modifier.weight(1f))
+                Metric("SHODA", "${(map.matchQuality*100).toInt()} %", "scan match", Amber, Modifier.weight(1f))
             }
-            Text("Body a spojnice jsou zatím návrh trasy v lokálních souřadnicích. Odeslání a autonomní jízdu doplníme po propojení SLAM s enkodéry/IMU a navigačním protokolem ESP32.", color = Amber, fontSize = 10.sp)
+            Text("Poloha je odhadována porovnáním po sobě jdoucích LiDAR skenů. Prokluz / rychlý pohyb / prázdné prostředí mohou odhad rozhodit.", color = Muted, fontSize = 9.sp)
+            if (!state.notificationsEnabled) Text("LDS stream není aktivní – mapování čeká na data.", color = Amber, fontSize = 10.sp)
+        }
+        Row(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(10.dp)
+                .background(Color(0xE6111B26), RoundedCornerShape(14.dp)).padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Button(onClick = onStart, enabled = state.lastScan != null && !map.running, modifier = Modifier.weight(1f)) { Text("▶ START", fontSize = 10.sp) }
+            OutlinedButton(onClick = onPause, enabled = map.running, modifier = Modifier.weight(1f)) { Text("Ⅱ PAUZA", fontSize = 10.sp) }
+            OutlinedButton(onClick = onReset, modifier = Modifier.weight(1f)) { Text("↻ RESET", fontSize = 10.sp) }
         }
     }
 }
 
 @Composable
-private fun RoutePlanningCanvas(ranges: FloatArray?, points: List<Offset>, modifier: Modifier = Modifier, onPointsChange: (List<Offset>) -> Unit) {
-    Canvas(modifier.background(Color(0xFF08131B), RoundedCornerShape(12.dp)).pointerInput(points, ranges) {
+private fun SlamMapCanvas(map: SlamSnapshot, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val scale = minOf(size.width, size.height) / (map.gridSize * map.resolution)
+        val cellPx = map.resolution * scale
+        val origin = Offset(size.width / 2f, size.height / 2f)
+        // Draw occupied cells only; unknown space stays visually quiet.
+        for (y in 0 until map.gridSize) for (x in 0 until map.gridSize) {
+            val v = map.cells[y * map.gridSize + x]
+            if (v >= 22) {
+                val px = origin.x + (x - map.gridSize / 2f) * cellPx
+                val py = origin.y - (y - map.gridSize / 2f) * cellPx
+                drawRect(Cyan.copy(alpha = (v / 120f).coerceIn(.25f, .9f)),
+                    Offset(px, py), androidx.compose.ui.geometry.Size(cellPx.coerceAtLeast(1f), cellPx.coerceAtLeast(1f)))
+            }
+        }
+        for (i in 1 until map.path.size) {
+            val a = map.path[i-1]; val b = map.path[i]
+            drawLine(Green, Offset(origin.x+a.x*scale, origin.y-a.y*scale), Offset(origin.x+b.x*scale, origin.y-b.y*scale), 2.dp.toPx())
+        }
+        val robot = Offset(origin.x + map.x*scale, origin.y - map.y*scale)
+        drawCircle(Green, 7.dp.toPx(), robot)
+        val heading = Math.toRadians(map.headingDeg.toDouble())
+        drawLine(Green, robot, Offset(robot.x + kotlin.math.sin(heading).toFloat()*22.dp.toPx(), robot.y - kotlin.math.cos(heading).toFloat()*22.dp.toPx()), 3.dp.toPx())
+    }
+}
+
+@Composable
+private fun RoutePlannerPage(
+    state: LdsBridgeState,
+    points: List<Offset>,
+    plannedPath: List<Offset>,
+    map: SlamSnapshot,
+    onPointsChange: (List<Offset>) -> Unit,
+    onFindPath: () -> Unit,
+    connected: Boolean,
+    armed: Boolean,
+    onPulse: (Float, Float) -> Unit,
+    onStop: () -> Unit
+) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF061018))) {
+        RouteMapCanvas(map, points, plannedPath, Modifier.fillMaxSize(), onPointsChange)
+        Column(
+            Modifier.align(Alignment.TopStart).fillMaxWidth().padding(10.dp)
+                .background(Color(0xD9111B26), RoundedCornerShape(14.dp)).padding(11.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("PLÁNOVÁNÍ TRASY", color = Cyan, fontSize = 15.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                Text(if (state.notificationsEnabled) "LIDAR LIVE" else "LIDAR OFF", color = if (state.notificationsEnabled) Green else Amber, fontSize = 9.sp)
+            }
+            Text(when (points.size) { 0 -> "Klepni na mapu pro bod A" ; 1 -> "Vyber bod B" ; else -> "A → B · ${plannedPath.size} bodů trasy" }, color = Ink, fontSize = 11.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Button(onClick = onFindPath, enabled = points.size == 2 && map.scansIntegrated > 0, modifier = Modifier.weight(1f)) { Text("NAJÍT CESTU", fontSize = 10.sp) }
+                OutlinedButton(onClick = { onPointsChange(emptyList()) }, modifier = Modifier.weight(1f)) { Text("NOVÁ TRASA", fontSize = 10.sp) }
+            }
+            if (points.size == 2 && plannedPath.isEmpty()) Text("Cesta zatím není vypočtena nebo je zablokovaná. Nejprve spusť SLAM a nasbírej mapu.", color = Amber, fontSize = 9.sp)
+            else if (plannedPath.isNotEmpty()) Text("A* našel cestu · ${"%.1f".format(plannedPath.zipWithNext().sumOf { (a,b) -> kotlin.math.hypot((b.x-a.x).toDouble(), (b.y-a.y).toDouble()) })} m", color = Green, fontSize = 10.sp)
+        }
+        Column(
+            Modifier.align(Alignment.BottomStart).padding(10.dp).widthIn(max = 250.dp)
+                .background(Color(0xE6111B26), RoundedCornerShape(14.dp)).padding(9.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Text("OVLÁDÁNÍ ROBOTA · KRÁTKÉ POVELY", color = Cyan, fontSize = 9.sp, fontWeight = FontWeight.Black)
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Button(onClick = { onPulse(.22f, 0f) }, enabled = connected && armed, modifier = Modifier.weight(1f)) { Text("↑ VPŘED", fontSize = 9.sp) }
+                Button(onClick = { onPulse(-.18f, 0f) }, enabled = connected && armed, modifier = Modifier.weight(1f)) { Text("↓ VZAD", fontSize = 9.sp) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                OutlinedButton(onClick = { onPulse(.08f, -.3f) }, enabled = connected && armed, modifier = Modifier.weight(1f)) { Text("↶ VLEVO", fontSize = 9.sp) }
+                OutlinedButton(onClick = { onPulse(.08f, .3f) }, enabled = connected && armed, modifier = Modifier.weight(1f)) { Text("VPRAVO ↷", fontSize = 9.sp) }
+                OutlinedButton(onClick = onStop, enabled = connected, modifier = Modifier.weight(1f)) { Text("STOP", fontSize = 9.sp) }
+            }
+            Text(if (connected && armed) "Pohon povolen · povely jsou krátké pulzy" else "Pro ruční povely připoj robota a povol pohon", color = Muted, fontSize = 8.sp)
+            Text("Vysavač / sledování cíle HLK-LD2451: volitelný modul, čeká na připojení radaru. Autonomní jízdu po A* zatím neaktivuji bez kalibrace pohonu a odometrie.", color = Amber, fontSize = 8.sp)
+        }
+    }
+}
+
+@Composable
+private fun RouteMapCanvas(
+    map: SlamSnapshot,
+    points: List<Offset>,
+    path: List<Offset>,
+    modifier: Modifier = Modifier,
+    onPointsChange: (List<Offset>) -> Unit
+) {
+    Canvas(modifier.pointerInput(points, map.scansIntegrated) {
         detectTapGestures { tap ->
-            val scale = minOf(size.width, size.height) * .44f / 5f
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val x = ((tap.x - center.x) / scale).coerceIn(-4.8f, 4.8f)
-            val y = ((center.y - tap.y) / scale).coerceIn(-4.8f, 4.8f)
-            onPointsChange(points + Offset(x, y))
+            val scale = minOf(size.width, size.height) / 12f
+            val center = Offset(size.width/2f, size.height/2f)
+            val next = Offset(((tap.x-center.x)/scale).coerceIn(-5.8f,5.8f), ((center.y-tap.y)/scale).coerceIn(-5.8f,5.8f))
+            onPointsChange(if (points.size >= 2) listOf(next) else points + next)
         }
-    }.padding(8.dp)) {
-        val center = Offset(size.width / 2f, size.height / 2f)
-        val radius = minOf(size.width, size.height) * .44f
-        val scale = radius / 5f
-        for (ring in 1..5) drawCircle(Border, scale * ring, center, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx()))
-        if (ranges != null) for (i in 0 until minOf(360, ranges.size)) {
-            val d = ranges[i]
-            if (!d.isFinite() || d <= 0f || d > 5f) continue
-            val angle = Math.toRadians(i.toDouble())
-            val p = Offset(center.x + kotlin.math.sin(angle).toFloat() * d * scale, center.y - kotlin.math.cos(angle).toFloat() * d * scale)
-            drawCircle(Amber, 2.2.dp.toPx(), p)
+    }) {
+        val scale = minOf(size.width, size.height) / 12f
+        val cellPx = map.resolution * scale
+        val origin = Offset(size.width/2f, size.height/2f)
+        for (y in 0 until map.gridSize) for (x in 0 until map.gridSize) {
+            val v = map.cells[y * map.gridSize + x]
+            if (v >= 22) {
+                val px = origin.x + (x-map.gridSize/2f)*cellPx
+                val py = origin.y - (y-map.gridSize/2f)*cellPx
+                drawRect(Cyan.copy(alpha = (v/120f).coerceIn(.25f,.85f)), Offset(px,py),
+                    androidx.compose.ui.geometry.Size(cellPx.coerceAtLeast(1f),cellPx.coerceAtLeast(1f)))
+            }
         }
-        var previous = center
-        for ((index, point) in points.withIndex()) {
-            val current = Offset(center.x + point.x * scale, center.y - point.y * scale)
-            drawLine(Green, previous, current, 3.dp.toPx())
-            drawCircle(Red, (6f + index.coerceAtMost(4)).dp.toPx(), current)
-            previous = current
+        for (i in 1 until path.size) {
+            val a=path[i-1]; val b=path[i]
+            drawLine(Green, Offset(origin.x+a.x*scale,origin.y-a.y*scale), Offset(origin.x+b.x*scale,origin.y-b.y*scale), 3.dp.toPx())
         }
-        drawCircle(Cyan, 5.dp.toPx(), center)
-        drawLine(Cyan, center, Offset(center.x, center.y - 14.dp.toPx()), 3.dp.toPx())
+        points.forEachIndexed { index, p ->
+            val q=Offset(origin.x+p.x*scale,origin.y-p.y*scale)
+            drawCircle(if(index==0) Green else Red, 8.dp.toPx(), q)
+        }
+        drawCircle(Cyan, 6.dp.toPx(), Offset(origin.x+map.x*scale,origin.y-map.y*scale))
     }
 }
 
