@@ -87,7 +87,7 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             val ok = withContext(Dispatchers.IO) {
                 try {
                     val svg = renderMapSvg(occupancyGrid, mappedPose)
-                    context.contentResolver.openOutputStream(uri)?.use { it.write(svg.toByteArray(Charsets.UTF_8)) } ?: false
+                    context.contentResolver.openOutputStream(uri)?.use { stream -> stream.write(svg.toByteArray(Charsets.UTF_8)); true } ?: false
                 } catch (_: Exception) { false }
             }
             mapFileStatus = if (ok) "Obrázek mapy byl uložen jako SVG" else "Export obrázku se nezdařil"
