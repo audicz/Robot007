@@ -1,22 +1,36 @@
-# Robot Cockpit — ESP32 Bluetooth SPP
+# Robot Cockpit / Robot007 — sjednocený projekt
 
-Android ground-control app (Kotlin + Jetpack Compose) for a robot controlled by a classic ESP32 over Bluetooth SPP. No ROS bridge or Wi-Fi is used for the control link.
+Hlavní repozitář pro robotickou platformu ESP32 a Android aplikaci Robot Cockpit. Android aplikace je v Kotlinu + Jetpack Compose.
 
-## Repository contents
-- `app/` — Android GUI, paired-device picker, joystick, stop/disarm, telemetry.
-- `firmware/Robot007_SPP/Robot007_SPP.ino` — matching ESP32 Arduino firmware.
-- `PROTOCOL_SPP.md` — line-delimited JSON protocol v1.
+## Jednotná struktura
 
-## First setup
-1. In Arduino IDE, select an **original ESP32** board with Bluetooth Classic support, install the Espressif ESP32 board package and flash the firmware.
-2. Pair the phone with `Robot007` from Android Bluetooth settings.
-3. Install the debug APK from the latest successful GitHub Actions run, open **Bluetooth**, select the paired device and connect.
-4. The first firmware build has motor outputs disabled by default. Check the exact board, motor driver, wiring, direction and power stage before enabling them in firmware.
-5. With the drive wheels lifted and a physical power cut-off available, test connection, STOP and the 700 ms command watchdog before any ground test.
+- `app/` — Android aplikace: celoplošný dashboard, joystick, SPP ovládání, telemetrie a samostatná obrazovka Xiaomi LDS BLE.
+- `app/src/main/java/cz/robotcockpit/app/LidarBleClient.kt` — BLE skenování, GATT připojení, notifikace a sestavení 360bodového skenu z 23 fragmentů.
+- `app/src/main/java/cz/robotcockpit/app/LidarActivity.kt` — živé 360° LiDAR zobrazení.
+- `firmware/Robot007_SPP/` — původní Arduino firmware pro ESP32 Classic Bluetooth SPP.
+- `esphome/` — experimentální ESPHome varianta řídicího firmware.
+- `PROTOCOL_SPP.md` — JSON protokol mezi Androidem a Robot007 přes Bluetooth Classic SPP.
+- `.github/workflows/build-apk.yml` — automatické sestavení debug APK po pushi do main.
 
-## Safety / hardware adaptation
-- The included GPIO assignment is only an example for a dual H-bridge with PWM + two direction pins per motor. It is not tailored to an unknown motor driver.
-- Battery and ultrasonic sensor inputs are disabled by default. Configure and calibrate them for your hardware.
-- ESP32 ADC inputs are not battery-tolerant; use a properly designed divider. Ultrasonic ECHO signals must be level-shifted to 3.3 V if the sensor outputs 5 V.
-- A phone STOP is not a safety-rated emergency stop. Add a physical power cutoff.
-- Bluetooth Classic SPP is supported by original ESP32, but not ESP32-S2, ESP32-S3 or ESP32-C3. Those chips need BLE or another transport.
+## Komunikace
+
+- **Robot drive / telemetry:** Bluetooth Classic SPP, UUID `00001101-0000-1000-8000-00805F9B34FB`.
+- **Xiaomi LDS bridge:** samostatné Bluetooth LE GATT spojení; service UUID `a71d0001-5b0e-4a6f-9c7a-0d6a5b3f2e10`, data characteristic `a71d0002-5b0e-4a6f-9c7a-0d6a5b3f2e10`.
+- LDS stream používá 20B rámce s hlavičkou `D3`, 23 fragmentů na otáčku a 360 vzdálenostních vzorků. Jeden byte vzdálenosti představuje 5 cm.
+
+## Aktuální stav LiDAR části
+
+Aktuálně je doplněno BLE vyhledávání, GATT připojení, odběr notifikací, skládání 23 fragmentů a živé vykreslení 360° skenu. Toto je základní živý scan viewer, nikoli hotový SLAM: stabilní mapa při pohybu robota vyžaduje odometrii (enkodéry), IMU a scan matching / korekci driftu. Tyto části se nesmějí zaměňovat s pouhým vykreslením LiDAR paprsků.
+
+## Sestavení APK
+
+1. Otevři záložku Actions v tomto repozitáři.
+2. Vyber poslední úspěšný běh **Build Robot Cockpit APK**.
+3. Stáhni artefakt `RobotCockpit-debug-APK`.
+
+## Bezpečnost
+
+- Výstupy motorů ve firmware zůstávají vypnuté, dokud není ověřen konkrétní driver, GPIO a zapojení.
+- STOP v Androidu není bezpečnostní hardwarový vypínač.
+- Před prvním testem zvedni hnací kola a ověř watchdog i fyzické odpojení napájení.
+- BLE LiDAR je samostatná linka a nemění bezpečnostní stav SPP řízení.
