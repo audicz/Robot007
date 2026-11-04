@@ -40,7 +40,7 @@ class LidarActivity : ComponentActivity() {
 
 @SuppressLint("MissingPermission")
 @Composable
-private fun LidarScreen(onBack: () -> Unit) {
+fun LidarScreen(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
     var frame by remember { mutableStateOf<LidarFrame?>(null) }
