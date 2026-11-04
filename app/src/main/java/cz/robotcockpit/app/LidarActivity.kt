@@ -407,10 +407,18 @@ private fun LidarOccupancyView(
             val cells = grid.snapshot()
             val pixels = IntArray(cells.size)
             for (i in cells.indices) {
-                val cell = cells[i].toInt() and 0xFF
-                if (cell > 1) {
-                    val alpha = ((cell / 40f).coerceIn(.25f, 1f) * 255f).toInt()
-                    pixels[i] = (alpha shl 24) or 0x0062E5A0
+                // ByteArray stores signed log-odds: positive = occupied,
+                // negative = observed free, zero = unknown. Do not mask to 0..255.
+                val cell = cells[i].toInt()
+                when {
+                    cell > 1 -> {
+                        val alpha = ((cell / 40f).coerceIn(.25f, 1f) * 255f).toInt()
+                        pixels[i] = (alpha shl 24) or 0x0062E5A0
+                    }
+                    cell < -1 -> {
+                        val alpha = ((-cell / 20f).coerceIn(.08f, .35f) * 255f).toInt()
+                        pixels[i] = (alpha shl 24) or 0x004A6B80
+                    }
                 }
             }
             val bitmap = Bitmap.createBitmap(grid.width, grid.height, Bitmap.Config.ARGB_8888)
