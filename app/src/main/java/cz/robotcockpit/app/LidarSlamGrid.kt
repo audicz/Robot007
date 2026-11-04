@@ -1,6 +1,5 @@
 package cz.robotcockpit.app
 
-import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -93,7 +92,7 @@ class LidarSlamGrid(
         val oy = originYcm ?: return null
         val x = width / 2.0 + (pose.xCm - ox) / cellSizeCm
         val y = height / 2.0 - (pose.yCm - oy) / cellSizeCm
-        if (x !in 0.0 until width.toDouble() || y !in 0.0 until height.toDouble()) return null
+        if (x < 0.0 || x >= width.toDouble() || y < 0.0 || y >= height.toDouble()) return null
         return x.toFloat() to y.toFloat()
     }
 
