@@ -5,6 +5,7 @@ import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.OutputStream
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -478,37 +479,54 @@ class LidarSlamGrid(val width: Int = 600, val height: Int = 600, val cellSizeCm:
         return x.toFloat() to y.toFloat()
     }
 
-    /** Atomic binary save. The file includes keyframe scans so SLAM can continue after restart. */
+    /** Save the complete SLAM session to an arbitrary output stream. */
+    @Synchronized fun writeTo(output: OutputStream): Boolean {
+        return try {
+            val out = DataOutputStream(BufferedOutputStream(output))
+            out.writeInt(0x5237534C) // R7SL
+            out.writeInt(2)
+            out.writeInt(width); out.writeInt(height); out.writeFloat(cellSizeCm)
+            out.writeBoolean(initialized)
+            out.writeInt(scansIntegrated)
+            writePose(out, lastPose)
+            out.writeFloat(lastScore)
+            out.writeBoolean(lastTracking)
+            out.writeInt(loopClosureCount)
+            out.writeInt(cells.size)
+            out.write(cells)
+            out.writeInt(keyframes.size)
+            for (k in keyframes) {
+                writePose(out, k.pose)
+                out.writeInt(k.points.size)
+                for (p in k.points) { out.writeFloat(p.x.toFloat()); out.writeFloat(p.y.toFloat()) }
+            }
+            out.writeInt(edges.size)
+            for (e in edges) {
+                out.writeInt(e.from); out.writeInt(e.to)
+                out.writeDouble(e.dx); out.writeDouble(e.dy); out.writeDouble(e.dyaw)
+                out.writeBoolean(e.loop)
+            }
+            out.flush()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Atomic internal save used for automatic recovery after app restart. */
     @Synchronized fun saveTo(file: File): Boolean {
         return try {
             file.parentFile?.mkdirs()
             val temp = File(file.parentFile, file.name + ".tmp")
-            DataOutputStream(BufferedOutputStream(temp.outputStream())).use { out ->
-                out.writeInt(0x5237534C) // R7SL
-                out.writeInt(2)
-                out.writeInt(width); out.writeInt(height); out.writeFloat(cellSizeCm)
-                out.writeBoolean(initialized)
-                out.writeInt(scansIntegrated)
-                writePose(out, lastPose)
-                out.writeFloat(lastScore)
-                out.writeBoolean(lastTracking)
-                out.writeInt(loopClosureCount)
-                out.writeInt(cells.size)
-                out.write(cells)
-                out.writeInt(keyframes.size)
-                for (k in keyframes) {
-                    writePose(out, k.pose)
-                    out.writeInt(k.points.size)
-                    for (p in k.points) { out.writeFloat(p.x.toFloat()); out.writeFloat(p.y.toFloat()) }
-                }
-                out.writeInt(edges.size)
-                for (e in edges) {
-                    out.writeInt(e.from); out.writeInt(e.to)
-                    out.writeDouble(e.dx); out.writeDouble(e.dy); out.writeDouble(e.dyaw)
-                    out.writeBoolean(e.loop)
-                }
+            val saved = temp.outputStream().use { writeTo(it) }
+            if (!saved) {
+                temp.delete()
+                return false
             }
-            if (file.exists()) file.delete()
+            if (file.exists() && !file.delete()) {
+                temp.delete()
+                return false
+            }
             temp.renameTo(file)
         } catch (_: Exception) {
             false
