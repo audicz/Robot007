@@ -27,6 +27,10 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import android.bluetooth.BluetoothDevice
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -52,16 +56,35 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     var mapRevision by remember { mutableIntStateOf(0) }
     var mappedPose by remember { mutableStateOf<RobotPose2D?>(null) }
     var slamUpdate by remember { mutableStateOf<SlamUpdate?>(null) }
+    var slamReady by remember { mutableStateOf(false) }
     val occupancyGrid = remember { LidarSlamGrid() }
-    LaunchedEffect(frame?.receivedAtMs) {
+    val mapFile = remember(context) { File(context.filesDir, "robot007_slam_map.bin") }
+
+    // Restore map and graph before accepting the first new scan.
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { occupancyGrid.loadFrom(mapFile) }
+        mappedPose = occupancyGrid.currentPose()
+        slamReady = true
+        mapRevision++
+    }
+
+    LaunchedEffect(frame?.receivedAtMs, slamReady) {
         val currentFrame = frame
-        if (currentFrame != null) {
+        if (slamReady && currentFrame != null) {
             val update = occupancyGrid.process(currentFrame)
             if (update != null) {
                 slamUpdate = update
                 mappedPose = update.pose
                 mapRevision++
             }
+        }
+    }
+
+    // Debounced autosave; the binary file contains the occupancy map and SLAM graph.
+    LaunchedEffect(mapRevision, slamReady) {
+        if (slamReady && occupancyGrid.integratedScans() > 0) {
+            delay(1400)
+            withContext(Dispatchers.IO) { occupancyGrid.saveTo(mapFile) }
         }
     }
     val client = remember {
@@ -133,7 +156,13 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { mapMode = false }, modifier = Modifier.weight(1f)) { Text("ŽIVÝ SKEN") }
                 Button(onClick = { mapMode = true }, modifier = Modifier.weight(1f)) { Text("2D MAPA") }
-                OutlinedButton(onClick = { occupancyGrid.clear(); mappedPose = null; mapRevision++ }) { Text("VYMAZAT") }
+                OutlinedButton(onClick = {
+                    occupancyGrid.clear()
+                    mappedPose = null
+                    slamUpdate = null
+                    mapRevision++
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { mapFile.delete() }
+                }) { Text("VYMAZAT") }
             }
             if (mapMode) {
                 LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
@@ -142,13 +171,13 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                     when {
                         update == null -> "ČEKÁM NA KOMPLETNÍ 360° SKEN"
                         !update.tracking -> "TRACKING ZTRACEN · mapa se nezapisuje (score ${"%.2f".format(update.score)})"
-                        update.loopClosure -> "LOOP CLOSURE / RELOKALIZACE · ${update.scans} skenů · score ${"%.2f".format(update.score)}"
-                        else -> "LiDAR SLAM AKTIVNÍ · ${update.scans} skenů · score ${"%.2f".format(update.score)}"
+                        update.loopClosure -> "LOOP CLOSURE · ${update.loopClosures} oprav · ${update.keyframes} keyframů · score ${"%.2f".format(update.score)}"
+                        else -> "LiDAR SLAM · ${update.scans} skenů · ${update.keyframes} keyframů · loop closures ${update.loopClosures} · score ${"%.2f".format(update.score)}"
                     },
                     color = if (update?.tracking == true) Color(0xFF62E5A0) else Color(0xFFFFC66D),
                     fontSize = 10.sp
                 )
-                Text("LiDAR-only scan-to-map · lokální korelace + periodická globální relokalizace · mapa 30 × 30 m / 5 cm",
+                Text("LiDAR-only scan matching + ICP loop closure + pose graph · automatické ukládání mapy · 30 × 30 m / 5 cm",
                     color = Color(0xFF8EA3B7), fontSize = 9.sp)
             } else {
                 LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
@@ -194,6 +223,9 @@ private fun LidarOccupancyView(
     val robotCell = remember(revision, displayPose) {
         displayPose?.let { grid.robotCell(it) }
     }
+    val trajectory = remember(revision) {
+        grid.trajectorySnapshot().mapNotNull { grid.robotCell(it) }
+    }
     // Keep map cells square on both portrait and landscape screens.
     BoxWithConstraints(
         modifier.background(Color(0xFF0D151E), RoundedCornerShape(14.dp)).padding(4.dp),
@@ -214,6 +246,16 @@ private fun LidarOccupancyView(
                     )
                 }
             }
+        }
+        for (i in 1 until trajectory.size) {
+            val a = trajectory[i - 1]
+            val b = trajectory[i]
+            drawLine(
+                Color(0xFFFFC66D).copy(alpha = 0.9f),
+                Offset(a.first * cellW, a.second * cellH),
+                Offset(b.first * cellW, b.second * cellH),
+                strokeWidth = 2.dp.toPx()
+            )
         }
         val robot = robotCell
         if (robot != null) {
