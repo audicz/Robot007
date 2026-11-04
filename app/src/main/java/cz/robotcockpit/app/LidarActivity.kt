@@ -50,13 +50,18 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     var selectedAddress by remember { mutableStateOf("") }
     var mapMode by remember { mutableStateOf(false) }
     var mapRevision by remember { mutableIntStateOf(0) }
+    var mappedPose by remember { mutableStateOf<RobotPose2D?>(null) }
     val occupancyGrid = remember { LidarSlamGrid() }
-    LaunchedEffect(frame?.receivedAtMs) {
+    LaunchedEffect(frame?.receivedAtMs, telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg, telemetry.odometryValid) {
         val currentFrame = frame
         if (currentFrame != null && telemetry.odometryValid &&
             telemetry.poseXcm != null && telemetry.poseYcm != null && telemetry.poseYawDeg != null) {
-            val pose = RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg)
-            if (occupancyGrid.integrate(currentFrame, pose)) mapRevision++
+            val odometryPose = RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg)
+            val alignedPose = occupancyGrid.matchAndIntegrate(currentFrame, odometryPose)
+            if (alignedPose != null) {
+                mappedPose = alignedPose
+                mapRevision++
+            }
         }
     }
     val client = remember {
@@ -128,16 +133,22 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { mapMode = false }, modifier = Modifier.weight(1f)) { Text("ŽIVÝ SKEN") }
                 Button(onClick = { mapMode = true }, modifier = Modifier.weight(1f)) { Text("2D MAPA") }
-                OutlinedButton(onClick = { occupancyGrid.clear(); mapRevision++ }) { Text("VYMAZAT") }
+                OutlinedButton(onClick = { occupancyGrid.clear(); mappedPose = null; mapRevision++ }) { Text("VYMAZAT") }
             }
             if (mapMode) {
-                LidarOccupancyView(occupancyGrid, mapRevision, telemetry, Modifier.fillMaxWidth().weight(1f))
+                LidarOccupancyView(occupancyGrid, mapRevision, telemetry, mappedPose, Modifier.fillMaxWidth().weight(1f))
+                val match = occupancyGrid.matchStatus()
                 Text(
-                    if (telemetry.odometryValid) "Odometrie aktivní · ${occupancyGrid.integratedScans()} skenů · mřížka 5 cm"
-                    else "MAPA ČEKÁ NA ODOMETRII: SPP telemetrie zatím neposílá xCm, yCm, yawDeg + odomValid=true.",
+                    if (telemetry.odometryValid) {
+                        "ODOMETRIE + SCAN MATCHING · ${occupancyGrid.integratedScans()} skenů · " +
+                            if (match.first) "korekce aktivní (score ${"%.2f".format(match.second)})"
+                            else "bez korekce (score ${"%.2f".format(match.second)})"
+                    } else "MAPA ČEKÁ NA ODOMETRII: SPP telemetrie musí posílat xCm, yCm, yawDeg + odomValid=true.",
                     color = if (telemetry.odometryValid) Color(0xFF62E5A0) else Color(0xFFFFC66D),
                     fontSize = 10.sp
                 )
+                Text("Lokální hledání: ±15 cm / ±8° · rozlišení mapy 5 cm · bez globálního loop closure",
+                    color = Color(0xFF8EA3B7), fontSize = 9.sp)
             } else {
                 LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
                 Text("Rozsah: 0–12,75 m · 360 vzorků · 5 cm / jednotka", color = Color(0xFF8EA3B7), fontSize = 9.sp)
@@ -175,13 +186,15 @@ private fun LidarOccupancyView(
     grid: LidarSlamGrid,
     revision: Int,
     telemetry: RobotTelemetry,
+    mappedPose: RobotPose2D?,
     modifier: Modifier = Modifier
 ) {
     val cells = remember(revision) { grid.snapshot() }
-    val robotCell = remember(revision, telemetry.poseXcm, telemetry.poseYcm) {
-        if (telemetry.odometryValid && telemetry.poseXcm != null && telemetry.poseYcm != null && telemetry.poseYawDeg != null)
-            grid.robotCell(RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg))
-        else null
+    val displayPose = mappedPose ?: if (telemetry.odometryValid && telemetry.poseXcm != null &&
+        telemetry.poseYcm != null && telemetry.poseYawDeg != null)
+        RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg) else null
+    val robotCell = remember(revision, displayPose) {
+        displayPose?.let { grid.robotCell(it) }
     }
     // Keep map cells square on both portrait and landscape screens.
     BoxWithConstraints(
@@ -208,7 +221,7 @@ private fun LidarOccupancyView(
         if (robot != null) {
             val p = Offset(robot.first * cellW, robot.second * cellH)
             drawCircle(Color(0xFF45D9E8), 5.dp.toPx(), p)
-            val yaw = Math.toRadians(telemetry.poseYawDeg ?: 0.0)
+            val yaw = Math.toRadians(displayPose?.yawDeg ?: 0.0)
             val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
             drawLine(Color.White, p, end, 2.dp.toPx())
         }
