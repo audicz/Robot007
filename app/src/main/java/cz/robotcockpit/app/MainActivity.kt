@@ -321,7 +321,23 @@ fun RobotCockpitApp() {
                                 telemetry = t,
                                 onBack = { page = 0 },
                                 initialMapMode = page == 5,
-                                initialPlannerMode = page == 5
+                                initialPlannerMode = page == 5,
+                                onArm = {
+                                    if (t.connected) { link.arm(true); armed = true; command = "POHON POVOLEN" }
+                                },
+                                onStop = {
+                                    link.arm(false); link.sendDrive(0f, 0f, false)
+                                    armed = false; command = "NOUZOVÝ STOP"
+                                },
+                                onDrive = { y, x ->
+                                    val throttle = y * maxPower
+                                    val steer = x * maxPower
+                                    if (t.connected && armed) {
+                                        link.sendDrive(throttle, steer, true)
+                                        command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}"
+                                    }
+                                },
+                                onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed) }
                             )
                             else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
                                 val device = paired.firstOrNull { it.address == selectedAddress }
@@ -588,7 +604,7 @@ private fun DrivePage(t: RobotTelemetry, armed: Boolean, power: Float, onPower: 
 }
 
 @Composable
-private fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float) -> Unit, onRelease: () -> Unit) {
+internal fun Joystick(modifier: Modifier, enabled: Boolean, onMove: (Float, Float) -> Unit, onRelease: () -> Unit) {
     var pos by remember { mutableStateOf(Offset.Zero) }
     var active by remember { mutableStateOf(false) }
     val latestPos by rememberUpdatedState(pos)
