@@ -45,6 +45,33 @@ Telemetry, normally every 200 ms:
 
 Unavailable optional sensors must be represented as JSON `null`, not fabricated values. The Android map displays the robot marker only when both `latitude` and `longitude` are real numeric GPS coordinates in valid ranges. The current generic firmware does not read a GPS module yet; wire/configure a GPS receiver before emitting these fields.
 
+### Optional backward-compatible odometry / IMU extension
+
+The Android app accepts these **additional** fields in a `telemetry` message. They are optional; the original protocol-v1 fields and existing firmware remain valid when they are absent.
+
+```json
+{
+  "type": "telemetry",
+  "protocol": 1,
+  "armed": false,
+  "pose": {
+    "xCm": 125.0,
+    "yCm": 48.0,
+    "yawDeg": 32.5,
+    "valid": true
+  },
+  "imuYawDeg": 32.2
+}
+```
+
+- `pose.xCm`, `pose.yCm`: robot position in centimetres in a continuous local map frame.
+- `pose.yawDeg`: heading in degrees; 0° points forward along +Y and positive angles turn clockwise.
+- `pose.valid`: true only when the pose estimate is initialized and considered valid.
+- `imuYawDeg`: optional IMU heading for diagnostics / future fusion.
+- Flat aliases `xCm`, `yCm`, `yawDeg`, `odomValid` are also accepted by the Android parser.
+
+The app only adds a LiDAR scan to the 2D occupancy map when a valid pose is present. It never invents a pose from GPS or from the LiDAR drawing. Existing firmware does not currently implement wheel encoders or IMU, so the map stays in “waiting for odometry” mode until a compatible sensor/odometry source emits these fields. This is an additive extension; do not change the existing `type`, `armed`, `throttle`, `steer`, `leftPwm`, or `rightPwm` meanings.
+
 ## Safety and setup
 
 1. Pair the phone with Bluetooth device `Robot007` in Android settings.
