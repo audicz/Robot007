@@ -43,16 +43,16 @@ import java.util.UUID
 import kotlin.concurrent.thread
 import kotlin.math.sqrt
 
-private val Bg = Color(0xFF080D13)
-private val Panel = Color(0xFF111B26)
-private val Panel2 = Color(0xFF192735)
-private val Border = Color(0xFF2A3C4E)
-private val Cyan = Color(0xFF45D9E8)
-private val Green = Color(0xFF62E5A0)
-private val Amber = Color(0xFFFFC66D)
-private val Red = Color(0xFFFF5F6D)
-private val Muted = Color(0xFF8EA3B7)
-private val Ink = Color(0xFFEAF3FB)
+private val Bg = CockpitPalette.Background
+private val Panel = CockpitPalette.Panel
+private val Panel2 = CockpitPalette.PanelRaised
+private val Border = CockpitPalette.Border
+private val Cyan = CockpitPalette.Cyan
+private val Green = CockpitPalette.Green
+private val Amber = CockpitPalette.Amber
+private val Red = CockpitPalette.Red
+private val Muted = CockpitPalette.Muted
+private val Ink = CockpitPalette.Text
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 data class RobotTelemetry(
@@ -384,11 +384,14 @@ private fun MapDashboard(
                 }
             },
             update = { view ->
-                view.onResume()
                 val lat = t.latitude
                 val lon = t.longitude
                 if (lat != null && lon != null && lat in -90.0..90.0 && lon in -180.0..180.0) {
-                    view.evaluateJavascript("window.robotMap&&window.robotMap.setRobotPosition($lat,$lon);", null)
+                    val positionKey = "$lat,$lon"
+                    if (view.getTag(android.R.id.content) != positionKey) {
+                        view.setTag(android.R.id.content, positionKey)
+                        view.evaluateJavascript("window.robotMap&&window.robotMap.setRobotPosition($lat,$lon);", null)
+                    }
                 }
             }
         )
@@ -477,18 +480,12 @@ private fun MapDashboard(
 
 @Composable
 private fun ScreenTitle(kicker: String, title: String, subtitle: String) {
-    Column(Modifier.padding(bottom = 8.dp)) {
-        Text(kicker, color = Cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-        Text(title, color = Ink, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        Text(subtitle, color = Muted, fontSize = 11.sp)
-    }
+    CockpitScreenHeader(kicker, title, subtitle)
 }
 
 @Composable
 private fun CardPanel(content: @Composable ColumnScope.() -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Panel), border = androidx.compose.foundation.BorderStroke(1.dp, Border), shape = RoundedCornerShape(14.dp)) {
-        Column(Modifier.padding(13.dp), content = content)
-    }
+    CockpitPanel(content)
 }
 
 @Composable
