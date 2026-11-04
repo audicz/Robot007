@@ -178,7 +178,7 @@ fun LidarScreen(
         }
     }
 
-    LaunchedEffect(mapRevision, goalCell, slamReady, plannerMode) {
+    LaunchedEffect(goalCell, slamReady, plannerMode) {
         val goal = goalCell
         if (plannerMode && goal != null && slamReady) {
             routeStatus = "POČÍTÁM TRASU…"
@@ -309,8 +309,7 @@ fun LidarScreen(
                     Text(routeStatus, color = if (plannedRoute != null) CockpitPalette.Green else CockpitPalette.Amber, fontSize = 10.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { goalCell = null; plannedRoute = null }, modifier = Modifier.weight(1f)) { Text("ZRUŠIT CÍL") }
-                        Button(onClick = { routeStatus = "NÁHLED TRASY JE PŘIPRAVEN · autonomní povely zatím nejsou implementovány ve firmware" },
-                            modifier = Modifier.weight(1f), enabled = plannedRoute != null) { Text("PŘIPRAVIT JÍZDU") }
+                        OutlinedButton(onClick = {}, modifier = Modifier.weight(1f), enabled = false) { Text("AUTONOMNÍ JÍZDA ZAMČENA") }
                     }
                     Text("Náhled A* trasy je lokální plán. Robot se sám nerozjede; firmware zatím nemá potvrzené enkodéry ani příkazy pro autonomní jízdu.",
                         color = CockpitPalette.Muted, fontSize = 9.sp)
