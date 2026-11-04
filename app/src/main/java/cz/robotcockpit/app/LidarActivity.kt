@@ -82,6 +82,18 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
             }
         }
     }
+    val exportImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/svg+xml")) { uri ->
+        if (uri != null) mapFileScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    val svg = renderMapSvg(occupancyGrid, mappedPose)
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(svg.toByteArray(Charsets.UTF_8)) } ?: false
+                } catch (_: Exception) { false }
+            }
+            mapFileStatus = if (ok) "Obrázek mapy byl uložen jako SVG" else "Export obrázku se nezdařil"
+        }
+    }
+
     val openMapLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -240,16 +252,10 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                 }) { Text("VYMAZAT") }
             }
             if (mapMode) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = { saveMapLauncher.launch("robot007-map.r7slam") },
-                        modifier = Modifier.weight(1f),
-                        enabled = slamReady && occupancyGrid.integratedScans() > 0
-                    ) { Text("ULOŽIT SOUBOR") }
-                    OutlinedButton(
-                        onClick = { openMapLauncher.launch(arrayOf("*/*")) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("NAČÍST SOUBOR") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(onClick = { saveMapLauncher.launch("robot007-map.r7slam") }, modifier = Modifier.weight(1f), enabled = slamReady && occupancyGrid.integratedScans() > 0, contentPadding = PaddingValues(4.dp)) { Text("ULOŽIT", fontSize = 10.sp) }
+                    OutlinedButton(onClick = { exportImageLauncher.launch("robot007-map.svg") }, modifier = Modifier.weight(1f), enabled = slamReady && occupancyGrid.integratedScans() > 0, contentPadding = PaddingValues(4.dp)) { Text("EXPORT SVG", fontSize = 10.sp) }
+                    OutlinedButton(onClick = { openMapLauncher.launch(arrayOf("*/*")) }, modifier = Modifier.weight(1f), contentPadding = PaddingValues(4.dp)) { Text("NAČÍST", fontSize = 10.sp) }
                 }
                 Text(mapFileStatus, color = Color(0xFF8EA3B7), fontSize = 9.sp)
                 LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
@@ -354,4 +360,41 @@ private fun LidarOccupancyView(
         }
         }
     }
+}
+
+private fun renderMapSvg(grid: LidarSlamGrid, pose: RobotPose2D?): String {
+    val w = grid.width
+    val h = grid.height
+    val cells = grid.snapshot()
+    val svg = StringBuilder()
+    val lt = 60.toChar()
+    fun tag(value: String) { svg.append(lt).append(value) }
+    tag("""svg xmlns="http://www.w3.org/2000/svg" width="$w" height="$h" viewBox="0 0 $w $h">""")
+    tag("""rect width="100%" height="100%" fill="#0d151e"/>""")
+    tag("""g fill="#62e5a0">""")
+    for (y in 0 until h) for (x in 0 until w) {
+        val v = cells[y * w + x].toInt()
+        if (v > 1) {
+            val opacity = (v / 40f).coerceIn(.25f, 1f)
+            tag("""rect x="$x" y="$y" width="1" height="1" opacity="$opacity"/>""")
+        }
+    }
+    tag("/g>")
+    val trail = grid.trajectorySnapshot().mapNotNull { grid.robotCell(it) }
+    if (trail.isNotEmpty()) {
+        tag("""polyline fill="none" stroke="#ffc66d" stroke-width="2" stroke-linecap="round" points="""")
+        trail.forEach { svg.append("${it.first},${it.second} ") }
+        svg.append(""""/>""")
+    }
+    pose?.let { p -> grid.robotCell(p)?.let { cell ->
+        val x = cell.first
+        val y = cell.second
+        val angle = Math.toRadians(p.yawDeg)
+        val ex = x + kotlin.math.sin(angle) * 18.0
+        val ey = y - kotlin.math.cos(angle) * 18.0
+        tag("""circle cx="$x" cy="$y" r="5" fill="none" stroke="#45d9e8" stroke-width="2"/>""")
+        tag("""line x1="$x" y1="$y" x2="$ex" y2="$ey" stroke="#ffffff" stroke-width="2"/>""")
+    } }
+    tag("/svg>")
+    return svg.toString()
 }
