@@ -46,8 +46,26 @@ class LidarRoutePlanner {
             }
         }
 
+        // LiDAR rays are angularly sampled, so free evidence is sparse at long
+        // range. Expand only the observed-free corridor by 2 cells (10 cm);
+        // unknown space farther away remains blocked.
+        val observedFree = BooleanArray(total)
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                if (occupancy[index(x, y)].toInt() < 0) {
+                    for (dy in -2..2) for (dx in -2..2) {
+                        if (dx * dx + dy * dy > 4) continue
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (inside(nx, ny) && !blocked[index(nx, ny)]) observedFree[index(nx, ny)] = true
+                    }
+                }
+            }
+        }
+
         fun walkable(x: Int, y: Int): Boolean =
-            inside(x, y) && !blocked[index(x, y)] && occupancy[index(x, y)].toInt() <= -1
+            inside(x, y) && !blocked[index(x, y)] &&
+                (occupancy[index(x, y)].toInt() <= -1 || observedFree[index(x, y)])
 
         fun nearestWalkable(origin: GridCell, maxRadius: Int): GridCell? {
             if (walkable(origin.x, origin.y)) return origin
