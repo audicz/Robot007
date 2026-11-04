@@ -51,15 +51,15 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     var mapMode by remember { mutableStateOf(false) }
     var mapRevision by remember { mutableIntStateOf(0) }
     var mappedPose by remember { mutableStateOf<RobotPose2D?>(null) }
+    var slamUpdate by remember { mutableStateOf<SlamUpdate?>(null) }
     val occupancyGrid = remember { LidarSlamGrid() }
-    LaunchedEffect(frame?.receivedAtMs, telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg, telemetry.odometryValid) {
+    LaunchedEffect(frame?.receivedAtMs) {
         val currentFrame = frame
-        if (currentFrame != null && telemetry.odometryValid &&
-            telemetry.poseXcm != null && telemetry.poseYcm != null && telemetry.poseYawDeg != null) {
-            val odometryPose = RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg)
-            val alignedPose = occupancyGrid.matchAndIntegrate(currentFrame, odometryPose)
-            if (alignedPose != null) {
-                mappedPose = alignedPose
+        if (currentFrame != null) {
+            val update = occupancyGrid.process(currentFrame)
+            if (update != null) {
+                slamUpdate = update
+                mappedPose = update.pose
                 mapRevision++
             }
         }
@@ -136,18 +136,19 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                 OutlinedButton(onClick = { occupancyGrid.clear(); mappedPose = null; mapRevision++ }) { Text("VYMAZAT") }
             }
             if (mapMode) {
-                LidarOccupancyView(occupancyGrid, mapRevision, telemetry, mappedPose, Modifier.fillMaxWidth().weight(1f))
-                val match = occupancyGrid.matchStatus()
+                LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
+                val update = slamUpdate
                 Text(
-                    if (telemetry.odometryValid) {
-                        "ODOMETRIE + SCAN MATCHING · ${occupancyGrid.integratedScans()} skenů · " +
-                            if (match.first) "korekce aktivní (score ${"%.2f".format(match.second)})"
-                            else "bez korekce (score ${"%.2f".format(match.second)})"
-                    } else "MAPA ČEKÁ NA ODOMETRII: SPP telemetrie musí posílat xCm, yCm, yawDeg + odomValid=true.",
-                    color = if (telemetry.odometryValid) Color(0xFF62E5A0) else Color(0xFFFFC66D),
+                    when {
+                        update == null -> "ČEKÁM NA KOMPLETNÍ 360° SKEN"
+                        !update.tracking -> "TRACKING ZTRACEN · mapa se nezapisuje (score ${"%.2f".format(update.score)})"
+                        update.loopClosure -> "LOOP CLOSURE / RELOKALIZACE · ${update.scans} skenů · score ${"%.2f".format(update.score)}"
+                        else -> "LiDAR SLAM AKTIVNÍ · ${update.scans} skenů · score ${"%.2f".format(update.score)}"
+                    },
+                    color = if (update?.tracking == true) Color(0xFF62E5A0) else Color(0xFFFFC66D),
                     fontSize = 10.sp
                 )
-                Text("Lokální hledání: ±15 cm / ±8° · rozlišení mapy 5 cm · bez globálního loop closure",
+                Text("LiDAR-only scan-to-map · lokální korelace + periodická globální relokalizace · mapa 30 × 30 m / 5 cm",
                     color = Color(0xFF8EA3B7), fontSize = 9.sp)
             } else {
                 LidarPolarView(frame, Modifier.fillMaxWidth().weight(1f))
@@ -185,14 +186,11 @@ private fun LidarPolarView(frame: LidarFrame?, modifier: Modifier = Modifier) {
 private fun LidarOccupancyView(
     grid: LidarSlamGrid,
     revision: Int,
-    telemetry: RobotTelemetry,
     mappedPose: RobotPose2D?,
     modifier: Modifier = Modifier
 ) {
     val cells = remember(revision) { grid.snapshot() }
-    val displayPose = mappedPose ?: if (telemetry.odometryValid && telemetry.poseXcm != null &&
-        telemetry.poseYcm != null && telemetry.poseYawDeg != null)
-        RobotPose2D(telemetry.poseXcm, telemetry.poseYcm, telemetry.poseYawDeg) else null
+    val displayPose = mappedPose
     val robotCell = remember(revision, displayPose) {
         displayPose?.let { grid.robotCell(it) }
     }
