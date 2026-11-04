@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -41,7 +40,7 @@ class LidarActivity : ComponentActivity() {
 
 @SuppressLint("MissingPermission")
 @Composable
-fun LidarScreen(telemetry: RobotTelemetry, onBack: () -> Unit) {
+fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
     var frame by remember { mutableStateOf<LidarFrame?>(null) }
