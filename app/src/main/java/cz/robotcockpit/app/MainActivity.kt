@@ -326,8 +326,11 @@ fun RobotCockpitApp() {
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
-                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH", "LIDAR", "SLAM/NAV").forEachIndexed { i, label ->
-                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ", "◉", "⌁")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+                        val navPages = listOf(0, 1, 2, 4, 5)
+                        val navLabels = listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "LIDAR", "SLAM/NAV")
+                        val navIcons = listOf("⌖", "✣", "⌁", "◉", "⌁")
+                        navPages.forEachIndexed { i, targetPage ->
+                            NavigationBarItem(selected = page == targetPage, onClick = { page = targetPage }, icon = { Text(navIcons[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(navLabels[i], fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
                         }
                     }
                 }
