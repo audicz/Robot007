@@ -382,9 +382,9 @@ private fun renderMapSvg(grid: LidarSlamGrid, pose: RobotPose2D?): String {
     tag("/g>")
     val trail = grid.trajectorySnapshot().mapNotNull { grid.robotCell(it) }
     if (trail.isNotEmpty()) {
-        tag("""polyline fill="none" stroke="#ffc66d" stroke-width="2" stroke-linecap="round" points="""")
+        tag("polyline fill=" + 34.toChar() + "none" + 34.toChar() + " stroke=" + 34.toChar() + "#ffc66d" + 34.toChar() + " stroke-width=" + 34.toChar() + "2" + 34.toChar() + " stroke-linecap=" + 34.toChar() + "round" + 34.toChar() + " points=")
         trail.forEach { svg.append("${it.first},${it.second} ") }
-        svg.append(""""/>""")
+        svg.append(34.toChar()).append("/>")
     }
     pose?.let { p -> grid.robotCell(p)?.let { cell ->
         val x = cell.first
