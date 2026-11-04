@@ -20,11 +20,19 @@ Hlavní repozitář pro robotickou platformu ESP32 a Android aplikaci Robot Cock
 
 ## Aktuální stav LiDAR části
 
-Android aplikace přijímá kompletní 360° skeny přes BLE a zpracovává je přímo v telefonu. SLAM backend již není závislý na SPP odometrii ani na enkodérech ESP32: první sken založí mapový počátek a další skeny lokalizuje metodou coarse-to-fine correlative scan-to-map matching. Z platných skenů vytváří 2D occupancy grid s rozlišením 5 cm a zobrazuje odhad polohy robota.
+Android přijímá kompletní 360° skeny přes BLE a provádí LiDAR-only SLAM přímo v telefonu; základní lokalizace nepotřebuje enkodéry, IMU ani odometrii ESP32.
 
-Backend obsahuje také periodické hrubé globální vyhledání polohy v již vytvořené mapě (relocalizaci), které může obnovit tracking po větším lokálním driftu. Jde o vlastní lehký LiDAR-only SLAM prototyp pro Android. **Zatím nemá plnohodnotný pose-graph optimizer ani distribuci korekcí do celé historie trajektorie**; globální relokalizace není totéž co kompletní loop-closure optimalizace. Při slabém skóre se sken do mapy nezapíše, aby se mapa nekazila chybnou polohou.
+Implementovaný řetězec:
+- Coarse-to-fine correlative scan-to-map tracking.
+- Výběr keyframů podle ujeté vzdálenosti, změny směru a času.
+- Polar range descriptor pro hledání kandidátů návratu na dříve navštívené místo.
+- Point-to-point ICP pro ověření kandidátní smyčky; smyčka se přijme pouze při dostatečném překryvu a nízké chybě.
+- Pose graph se sekvenčními relativními vazbami a loop-closure vazbami; po optimalizaci se mapa znovu sestaví z keyframů, aby se oprava promítla do celé mapy a trajektorie.
+- Automatické ukládání a načtení occupancy mapy, keyframů a grafu do interního úložiště Androidu.
 
-Stávající BLE UUID, formát 20B fragmentů, 23 fragmentů na otáčku a Bluetooth Classic SPP protokol v1 zůstávají zachované. SPP telemetrie s enkodéry/IMU může být v budoucnu použita jako predikce pohybu, ale pro základní LiDAR lokalizaci není nutná.
+Mapa má 600 × 600 buněk, 5 cm/buňku (30 × 30 m). Žlutá čára zobrazuje trajektorii keyframů. Reset mapy smaže i uložený SLAM soubor. BLE UUID, 20B fragmenty, 23 fragmentů na otáčku a Bluetooth Classic SPP protokol v1 zůstávají beze změny.
+
+**Technické omezení:** Jde o vlastní odlehčený 2D SLAM pro daný LDS bridge, ne o plnou implementaci Cartographeru. Optimalizace grafu je iterativní relaxace, ne sparse nonlinear least-squares solver; loop closure závisí na geometrii prostředí a musí se ověřit jízdním testem. Kvalitu mapy nelze potvrdit samotným sestavením APK.
 
 ## Sestavení APK
 
