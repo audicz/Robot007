@@ -71,7 +71,7 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     LaunchedEffect(frame?.receivedAtMs, slamReady) {
         val currentFrame = frame
         if (slamReady && currentFrame != null) {
-            val update = occupancyGrid.process(currentFrame)
+            val update = withContext(Dispatchers.Default) { occupancyGrid.process(currentFrame) }
             if (update != null) {
                 slamUpdate = update
                 mappedPose = update.pose
