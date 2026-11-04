@@ -75,6 +75,10 @@ fun LidarScreen(
     var mappedPose by remember { mutableStateOf<RobotPose2D?>(null) }
     var slamUpdate by remember { mutableStateOf<SlamUpdate?>(null) }
     var slamReady by remember { mutableStateOf(false) }
+    LaunchedEffect(initialPlannerMode, initialMapMode) {
+        mapMode = initialMapMode || initialPlannerMode
+        plannerMode = initialPlannerMode
+    }
     val occupancyGrid = remember { LidarSlamGrid() }
     val mapFile = remember(context) { File(context.filesDir, "robot007_slam_map.bin") }
     var mapFileStatus by remember { mutableStateOf("Mapa se průběžně ukládá do telefonu") }
