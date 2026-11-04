@@ -68,6 +68,12 @@ data class RobotTelemetry(
     val distanceCm: Double? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    // Optional protocol-v1 extensions. Old Robot007 firmware may omit all of them.
+    val poseXcm: Double? = null,
+    val poseYcm: Double? = null,
+    val poseYawDeg: Double? = null,
+    val odometryValid: Boolean = false,
+    val imuYawDeg: Double? = null,
     val uptimeMs: Long? = null,
     val firmware: String = "—",
     val lastMessage: String = "—",
@@ -102,6 +108,12 @@ class BluetoothLink(private val onState: (RobotTelemetry) -> Unit) {
                     try {
                         val j = JSONObject(line)
                         if (j.optString("type") == "telemetry") {
+                            val pose = j.optJSONObject("pose")
+                            val poseX = if (j.has("xCm")) j.optDouble("xCm", Double.NaN) else pose?.optDouble("xCm", Double.NaN) ?: Double.NaN
+                            val poseY = if (j.has("yCm")) j.optDouble("yCm", Double.NaN) else pose?.optDouble("yCm", Double.NaN) ?: Double.NaN
+                            val poseYaw = if (j.has("yawDeg")) j.optDouble("yawDeg", Double.NaN) else pose?.optDouble("yawDeg", Double.NaN) ?: Double.NaN
+                            val imuYaw = if (j.has("imuYawDeg")) j.optDouble("imuYawDeg", Double.NaN) else Double.NaN
+                            val odomValid = j.optBoolean("odomValid", pose?.optBoolean("valid", false) ?: false)
                             current = current.copy(
                                 connected = true,
                                 status = "Připojeno · data přijímána",
@@ -114,6 +126,11 @@ class BluetoothLink(private val onState: (RobotTelemetry) -> Unit) {
                                 distanceCm = if (j.has("distanceCm") && !j.isNull("distanceCm")) j.optDouble("distanceCm") else null,
                                 latitude = if (j.has("latitude") && !j.isNull("latitude")) j.optDouble("latitude") else null,
                                 longitude = if (j.has("longitude") && !j.isNull("longitude")) j.optDouble("longitude") else null,
+                                poseXcm = poseX.takeIf { it.isFinite() },
+                                poseYcm = poseY.takeIf { it.isFinite() },
+                                poseYawDeg = poseYaw.takeIf { it.isFinite() },
+                                odometryValid = odomValid && poseX.isFinite() && poseY.isFinite() && poseYaw.isFinite(),
+                                imuYawDeg = imuYaw.takeIf { it.isFinite() },
                                 uptimeMs = if (j.has("uptimeMs")) j.optLong("uptimeMs") else null,
                                 firmware = j.optString("firmware", current.firmware),
                                 lastMessage = line,
@@ -300,7 +317,7 @@ fun RobotCockpitApp() {
                                 if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
-                            4 -> LidarScreen(onBack = { page = 0 })
+                            4 -> LidarScreen(telemetry = t, onBack = { page = 0 })
                             else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
                                 val device = paired.firstOrNull { it.address == selectedAddress }
                                 if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
