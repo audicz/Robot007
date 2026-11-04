@@ -20,7 +20,11 @@ Hlavní repozitář pro robotickou platformu ESP32 a Android aplikaci Robot Cock
 
 ## Aktuální stav LiDAR části
 
-Aktuálně je doplněno BLE vyhledávání, GATT připojení, odběr notifikací, skládání 23 fragmentů, živé vykreslení 360° skenu a 2D occupancy grid s rozlišením 5 cm. Mapa přijímá polohu z volitelných polí SPP telemetrie (`pose.xCm`, `pose.yCm`, `pose.yawDeg`, `pose.valid`; případně ploché aliasy). Pokud je starý firmware neposílá, aplikace mapu správně ponechá ve stavu „čeká na odometrii“ a nijak si polohu nevymýšlí. Jde o mapování podle odometrie, nikoli dokončený SLAM: další etapou je skutečný odhad pohybu z enkodérů + IMU, scan matching a korekce driftu / loop closure.
+Android aplikace přijímá kompletní 360° skeny přes BLE a zpracovává je přímo v telefonu. SLAM backend již není závislý na SPP odometrii ani na enkodérech ESP32: první sken založí mapový počátek a další skeny lokalizuje metodou coarse-to-fine correlative scan-to-map matching. Z platných skenů vytváří 2D occupancy grid s rozlišením 5 cm a zobrazuje odhad polohy robota.
+
+Backend obsahuje také periodické hrubé globální vyhledání polohy v již vytvořené mapě (relocalizaci), které může obnovit tracking po větším lokálním driftu. Jde o vlastní lehký LiDAR-only SLAM prototyp pro Android. **Zatím nemá plnohodnotný pose-graph optimizer ani distribuci korekcí do celé historie trajektorie**; globální relokalizace není totéž co kompletní loop-closure optimalizace. Při slabém skóre se sken do mapy nezapíše, aby se mapa nekazila chybnou polohou.
+
+Stávající BLE UUID, formát 20B fragmentů, 23 fragmentů na otáčku a Bluetooth Classic SPP protokol v1 zůstávají zachované. SPP telemetrie s enkodéry/IMU může být v budoucnu použita jako predikce pohybu, ale pro základní LiDAR lokalizaci není nutná.
 
 ## Sestavení APK
 
