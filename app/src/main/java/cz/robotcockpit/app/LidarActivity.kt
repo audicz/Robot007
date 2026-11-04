@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -21,9 +22,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -312,53 +316,61 @@ private fun LidarOccupancyView(
     mappedPose: RobotPose2D?,
     modifier: Modifier = Modifier
 ) {
-    val cells = remember(revision) { grid.snapshot() }
-    val displayPose = mappedPose
-    val robotCell = remember(revision, displayPose) {
-        displayPose?.let { grid.robotCell(it) }
+    // Rasterize the 600x600 occupancy grid off the UI thread. Drawing one
+    // texture is substantially cheaper than issuing hundreds of thousands
+    // of individual Compose drawRect calls on every frame.
+    val mapBitmap by produceState<ImageBitmap?>(initialValue = null, revision) {
+        value = withContext(Dispatchers.Default) {
+            val cells = grid.snapshot()
+            val pixels = IntArray(cells.size)
+            for (i in cells.indices) {
+                val cell = cells[i].toInt() and 0xFF
+                if (cell > 1) {
+                    val alpha = ((cell / 40f).coerceIn(.25f, 1f) * 255f).toInt()
+                    pixels[i] = (alpha shl 24) or 0x0062E5A0
+                }
+            }
+            val bitmap = Bitmap.createBitmap(grid.width, grid.height, Bitmap.Config.ARGB_8888)
+            bitmap.setPixels(pixels, 0, grid.width, 0, 0, grid.width, grid.height)
+            bitmap.asImageBitmap()
+        }
+    }
+    val robotCell = remember(revision, mappedPose) {
+        mappedPose?.let { grid.robotCell(it) }
     }
     val trajectory = remember(revision) {
         grid.trajectorySnapshot().mapNotNull { grid.robotCell(it) }
     }
-    // Keep map cells square on both portrait and landscape screens.
     BoxWithConstraints(
         modifier.background(CockpitPalette.MapBackground, RoundedCornerShape(14.dp)).padding(4.dp),
         contentAlignment = Alignment.Center
     ) {
         val mapSize = minOf(maxWidth, maxHeight)
         Canvas(Modifier.size(mapSize)) {
-        val cellW = size.width / grid.width
-        val cellH = size.height / grid.height
-        for (y in 0 until grid.height) {
-            for (x in 0 until grid.width) {
-                val value = cells[y * grid.width + x].toInt()
-                if (value > 1) {
-                    drawRect(
-                        color = CockpitPalette.Green.copy(alpha = (value / 40f).coerceIn(.25f, 1f)),
-                        topLeft = Offset(x * cellW, y * cellH),
-                        size = androidx.compose.ui.geometry.Size(cellW + .25f, cellH + .25f)
-                    )
-                }
+            val image = mapBitmap
+            if (image != null) {
+                drawImage(image, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
             }
-        }
-        for (i in 1 until trajectory.size) {
-            val a = trajectory[i - 1]
-            val b = trajectory[i]
-            drawLine(
-                CockpitPalette.Amber.copy(alpha = 0.9f),
-                Offset(a.first * cellW, a.second * cellH),
-                Offset(b.first * cellW, b.second * cellH),
-                strokeWidth = 2.dp.toPx()
-            )
-        }
-        val robot = robotCell
-        if (robot != null) {
-            val p = Offset(robot.first * cellW, robot.second * cellH)
-            drawCircle(CockpitPalette.Cyan, 5.dp.toPx(), p)
-            val yaw = Math.toRadians(displayPose?.yawDeg ?: 0.0)
-            val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
-            drawLine(Color.White, p, end, 2.dp.toPx())
-        }
+            val cellW = size.width / grid.width
+            val cellH = size.height / grid.height
+            for (i in 1 until trajectory.size) {
+                val a = trajectory[i - 1]
+                val b = trajectory[i]
+                drawLine(
+                    CockpitPalette.Amber.copy(alpha = 0.9f),
+                    Offset(a.first * cellW, a.second * cellH),
+                    Offset(b.first * cellW, b.second * cellH),
+                    strokeWidth = 2.dp.toPx()
+                )
+            }
+            val robot = robotCell
+            if (robot != null) {
+                val p = Offset(robot.first * cellW, robot.second * cellH)
+                drawCircle(CockpitPalette.Cyan, 5.dp.toPx(), p)
+                val yaw = Math.toRadians(mappedPose?.yawDeg ?: 0.0)
+                val end = Offset(p.x + sin(yaw).toFloat() * 18.dp.toPx(), p.y - cos(yaw).toFloat() * 18.dp.toPx())
+                drawLine(CockpitPalette.Text, p, end, 2.dp.toPx())
+            }
         }
     }
 }
