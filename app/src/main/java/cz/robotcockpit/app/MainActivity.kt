@@ -300,6 +300,7 @@ fun RobotCockpitApp() {
                                 if (t.connected && armed) { link.sendDrive(throttle, steer, true); command = "T ${"%.2f".format(throttle)} · S ${"%.2f".format(steer)}" }
                             }, onRelease = { if (t.connected) link.sendDrive(0f, 0f, armed); command = "NEUTRÁL" }, command = command)
                             2 -> TelemetryPage(t)
+                            4 -> LidarScreen(onBack = { page = 0 })
                             else -> ConnectionPage(t, paired, selectedAddress, onSelect = { selectedAddress = it }, onRefresh = { refreshDevices() }, onConnect = {
                                 val device = paired.firstOrNull { it.address == selectedAddress }
                                 if (device != null) link.connect(device) else t = t.copy(error = "Nejdřív spáruj ESP32 v nastavení Androidu.")
@@ -307,8 +308,8 @@ fun RobotCockpitApp() {
                         }
                     }
                     NavigationBar(containerColor = Panel, contentColor = Ink) {
-                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH").forEachIndexed { i, label ->
-                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
+                        listOf("MAPA", "ŘÍZENÍ", "TELEMETRIE", "BLUETOOTH", "LIDAR").forEachIndexed { i, label ->
+                            NavigationBarItem(selected = page == i, onClick = { page = i }, icon = { Text(listOf("⌖", "✣", "⌁", "ᛒ", "◉")[i], fontSize = 20.sp, fontWeight = FontWeight.Bold) }, label = { Text(label, fontSize = 8.sp, maxLines = 1) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = Cyan, selectedTextColor = Cyan, indicatorColor = Panel2, unselectedIconColor = Muted, unselectedTextColor = Muted))
                         }
                     }
                 }
