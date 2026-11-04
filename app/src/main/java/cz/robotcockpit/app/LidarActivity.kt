@@ -31,6 +31,7 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -59,6 +60,70 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
     var slamReady by remember { mutableStateOf(false) }
     val occupancyGrid = remember { LidarSlamGrid() }
     val mapFile = remember(context) { File(context.filesDir, "robot007_slam_map.bin") }
+    var mapFileStatus by remember { mutableStateOf("Mapa se průběžně ukládá do telefonu") }
+    val mapFileScope = rememberCoroutineScope()
+
+    // Export the complete SLAM session through Android's system file picker.
+    val saveMapLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        if (uri != null) {
+            mapFileScope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    if (occupancyGrid.integratedScans() == 0) false
+                    else {
+                        occupancyGrid.saveTo(mapFile) &&
+                            (context.contentResolver.openOutputStream(uri)?.use { output ->
+                                occupancyGrid.writeTo(output)
+                            } ?: false)
+                    }
+                }
+                mapFileStatus = if (saved) "Mapa a SLAM graf byly exportovány" else "Export se nezdařil – není dostupná mapa nebo soubor"
+            }
+        }
+    }
+    val openMapLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            mapFileScope.launch {
+                val loaded = withContext(Dispatchers.IO) {
+                    val imported = File(context.cacheDir, "robot007-import.r7slam")
+                    val copied = try {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            imported.outputStream().use { output -> input.copyTo(output) }
+                        } ?: false
+                    } catch (_: Exception) { false }
+                    if (!copied) false
+                    else {
+                        val validator = LidarSlamGrid()
+                        if (!validator.loadFrom(imported)) false
+                        else {
+                            val restored = occupancyGrid.loadFrom(imported)
+                            if (restored) {
+                                imported.copyTo(mapFile, overwrite = true)
+                            }
+                            imported.delete()
+                            restored
+                        }
+                    }
+                }
+                if (loaded) {
+                    mappedPose = occupancyGrid.currentPose()
+                    val (tracking, score) = occupancyGrid.matchStatus()
+                    slamUpdate = SlamUpdate(
+                        occupancyGrid.currentPose(), tracking, false, score,
+                        occupancyGrid.integratedScans(), occupancyGrid.keyframeCount(),
+                        occupancyGrid.loopClosures()
+                    )
+                    mapRevision++
+                    mapFileStatus = "Mapa byla načtena – pokračuji v mapování"
+                } else {
+                    mapFileStatus = "Soubor není platná mapa Robot Cockpit (.r7slam)"
+                }
+            }
+        }
+    }
 
     // Restore map and graph before accepting the first new scan.
     LaunchedEffect(Unit) {
@@ -170,6 +235,18 @@ fun LidarScreen(telemetry: RobotTelemetry = RobotTelemetry(), onBack: () -> Unit
                 }) { Text("VYMAZAT") }
             }
             if (mapMode) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { saveMapLauncher.launch("robot007-map.r7slam") },
+                        modifier = Modifier.weight(1f),
+                        enabled = slamReady && occupancyGrid.integratedScans() > 0
+                    ) { Text("ULOŽIT SOUBOR") }
+                    OutlinedButton(
+                        onClick = { openMapLauncher.launch(arrayOf("*/*")) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("NAČÍST SOUBOR") }
+                }
+                Text(mapFileStatus, color = Color(0xFF8EA3B7), fontSize = 9.sp)
                 LidarOccupancyView(occupancyGrid, mapRevision, mappedPose, Modifier.fillMaxWidth().weight(1f))
                 val update = slamUpdate
                 Text(
