@@ -63,12 +63,16 @@ fun LidarScreen(
     onRelease: () -> Unit = {}
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var devices by remember { mutableStateOf<List<LidarDevice>>(emptyList()) }
     var frame by remember { mutableStateOf<LidarFrame?>(null) }
-    var status by remember { mutableStateOf("LDS BLE odpojeno") }
+    var status by remember { mutableStateOf("Wi-Fi UDP odpojeno") }
     var connected by remember { mutableStateOf(false) }
-    var scanning by remember { mutableStateOf(false) }
-    var selectedAddress by remember { mutableStateOf("") }
+    var udpStats by remember { mutableStateOf(LidarUdpStats()) }
+    var slamWallMs by remember { mutableStateOf(0L) }
+    var slamCpuMs by remember { mutableStateOf(0L) }
+    var slamAvgMs by remember { mutableStateOf(0f) }
+    var slamMaxMs by remember { mutableStateOf(0L) }
+    var scanHz by remember { mutableStateOf(0f) }
+    var lastFrameAtMs by remember { mutableStateOf(0L) }
     var mapMode by remember { mutableStateOf(initialMapMode || initialPlannerMode) }
     var plannerMode by remember { mutableStateOf(initialPlannerMode) }
     var goalCell by remember { mutableStateOf<GridCell?>(null) }
@@ -178,7 +182,18 @@ fun LidarScreen(
     LaunchedEffect(frame?.receivedAtMs, slamReady) {
         val currentFrame = frame
         if (slamReady && currentFrame != null) {
+            if (lastFrameAtMs > 0L) {
+                val period = (currentFrame.receivedAtMs - lastFrameAtMs).coerceAtLeast(1L)
+                scanHz = 1000f / period.toFloat()
+            }
+            lastFrameAtMs = currentFrame.receivedAtMs
+            val wallStart = android.os.SystemClock.elapsedRealtime()
+            val cpuStart = android.os.Process.getElapsedCpuTime()
             val update = withContext(Dispatchers.Default) { occupancyGrid.process(currentFrame) }
+            slamWallMs = android.os.SystemClock.elapsedRealtime() - wallStart
+            slamCpuMs = android.os.Process.getElapsedCpuTime() - cpuStart
+            slamAvgMs = if (slamAvgMs <= 0f) slamWallMs.toFloat() else slamAvgMs * 0.85f + slamWallMs * 0.15f
+            slamMaxMs = maxOf(slamMaxMs, slamWallMs)
             if (update != null) {
                 slamUpdate = update
                 mappedPose = update.pose
@@ -219,29 +234,17 @@ fun LidarScreen(
         }
     }
     val client = remember {
-        LidarBleClient(context, { devices = it }, { frame = it }, {
-            status = it
-            connected = it.contains("stream aktivní") || it.contains("BLE připojeno")
-        })
+        LidarUdpClient(
+            onFrame = { frame = it },
+            onStatus = { message ->
+                status = message
+                connected = message.startsWith("UDP RX AKTIVNÍ")
+            },
+            onStats = { udpStats = it }
+        )
     }
-    val permissions = remember {
-        if (Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-    }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-        if (result.values.all { it }) {
-            client.startScan()
-            scanning = true
-        } else status = "Chybí oprávnění pro BLE skenování / připojení"
-    }
-    fun ensurePermissionsAndScan() {
-        val missing = permissions.filter { ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isEmpty()) {
-            client.startScan()
-            scanning = true
-        } else permissionLauncher.launch(missing.toTypedArray())
-    }
-    DisposableEffect(Unit) {
+    LaunchedEffect(client) { client.start() }
+    DisposableEffect(client) {
         onDispose { client.close() }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = CockpitPalette.Cyan, background = CockpitPalette.Background, surface = CockpitPalette.Panel)) {
@@ -250,7 +253,7 @@ fun LidarScreen(
                 Text("‹", color = CockpitPalette.Cyan, fontSize = 32.sp, modifier = Modifier.padding(end = 10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("ROBOT COCKPIT · LDS", color = CockpitPalette.Text, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = .7.sp)
-                    Text("XIAOMI LDS BLE  ·  360° SCAN", color = CockpitPalette.Muted, fontSize = 9.sp, letterSpacing = .8.sp)
+                    Text("WI-FI UDP D9  ·  360° / MILLIMETRE SCAN", color = CockpitPalette.Muted, fontSize = 9.sp, letterSpacing = .8.sp)
                 }
                 TextButton(onClick = onBack) { Text("ZPĚT") }
             }
@@ -258,27 +261,17 @@ fun LidarScreen(
             Text(status, color = if (connected) CockpitPalette.Green else CockpitPalette.Amber, fontSize = 11.sp)
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { ensurePermissionsAndScan() }, modifier = Modifier.weight(1f)) { Text(if (scanning) "OBNOVIT SCAN" else "VYHLEDAT LDS") }
-                OutlinedButton(onClick = { client.disconnect(); connected = false; status = "LDS odpojeno"; frame = null }) { Text("ODPOJIT") }
+                Button(onClick = { client.start() }, modifier = Modifier.weight(1f)) { Text("SPUSTIT UDP RX") }
+                OutlinedButton(onClick = { client.stop(); connected = false; frame = null; lastFrameAtMs = 0L }) { Text("ZASTAVIT") }
             }
-            if (!connected) {
-                Text("BLE zařízení", color = CockpitPalette.Cyan, fontSize = 12.sp, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
-                LazyColumn(Modifier.heightIn(max = 150.dp)) {
-                    items(devices, key = { it.address }) { item ->
-                        Row(Modifier.fillMaxWidth().background(CockpitPalette.Panel, RoundedCornerShape(9.dp)).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(item.name, color = Color.White, fontSize = 12.sp)
-                                Text(item.address, color = CockpitPalette.Muted, fontSize = 9.sp)
-                            }
-                            TextButton(onClick = {
-                                selectedAddress = item.address
-                                client.connect(item.device)
-                                scanning = false
-                            }) { Text("PŘIPOJIT") }
-                        }
-                    }
-                }
-            }
+            Text(
+                "RX ${udpStats.rxPackets} paketů · ${udpStats.completedScans} skenů · ${udpStats.droppedScans} ztracených · ${udpStats.badPackets} chybných",
+                color = CockpitPalette.Muted, fontSize = 9.sp
+            )
+            Text(
+                "SLAM wall ${slamWallMs} ms · CPU ${slamCpuMs} ms · průměr ${"%.1f".format(slamAvgMs)} ms · max ${slamMaxMs} ms · ${"%.1f".format(scanHz)} Hz",
+                color = CockpitPalette.Cyan, fontSize = 9.sp
+            )
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(if (plannerMode) "ROUTE PLANNER" else if (mapMode) "SLAM OCCUPANCY MAP" else "LIVE POLAR SCAN", color = CockpitPalette.Cyan, fontSize = 11.sp)
