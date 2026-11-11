@@ -3,7 +3,7 @@ name: Build Robot Cockpit APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, feature/v24-10-22-mobile-slam-udp]
 
 permissions:
   contents: read
