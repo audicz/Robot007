@@ -12,8 +12,8 @@ android {
         applicationId = "cz.robotcockpit.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.9-map-render-opt"
+        versionCode = 10
+        versionName = "0.10.22-mobile-slam-udp"
     }
 
     buildFeatures { compose = true }
